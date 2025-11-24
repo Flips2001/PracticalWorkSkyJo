@@ -1,0 +1,11 @@
+[project]
+name = "SkyjoFramwork"
+version = "0.1.0"
+description = "A framework for the Skyjo card game"
+
+requires-python = ">=3.12"
+dependencies = [
+    "numpy",
+    "pettingzoo",
+    "pytest"
+]
