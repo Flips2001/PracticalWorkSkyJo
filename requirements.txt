@@ -3,3 +3,4 @@ pettingzoo
 pytest
 pytest-emoji
 pytest-md
+pre-commit
