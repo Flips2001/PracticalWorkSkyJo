@@ -1,6 +1,7 @@
 from Skyjo.src.players.player import Player
 import random
 
+
 class RandomPlayer(Player):
     def select_action(self, observation, legal_actions):
         """

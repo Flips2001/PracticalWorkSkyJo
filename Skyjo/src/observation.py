@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from Skyjo.src.card import Card
 from typing import List, Optional
 
+
 @dataclass
 class Observation:
     player_id: int
