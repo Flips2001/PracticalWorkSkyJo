@@ -1,4 +1,4 @@
-from players.player import Player
+from Skyjo.src.players.player import Player
 
 class HumanPlayer(Player):
     def select_action(self, observation, legal_actions):

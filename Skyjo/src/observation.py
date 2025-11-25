@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from card import Card
+from Skyjo.src.card import Card
 from typing import List, Optional
 
 @dataclass

@@ -1,6 +1,6 @@
 import pytest
-from players.random_player import RandomPlayer
-from card import Card
+from Skyjo.src.players.random_player import RandomPlayer
+from Skyjo.src.card import Card
 
 @pytest.fixture
 def random_player():

@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from observation import Observation
+from Skyjo.src.observation import Observation
 from typing import Any, List
 
 class Player(ABC):

@@ -1,6 +1,6 @@
 import pytest
-from players.human_player import HumanPlayer
-from card import Card
+from Skyjo.src.players.human_player import HumanPlayer
+from Skyjo.src.card import Card
 
 @pytest.fixture
 def human_player():

@@ -1,4 +1,4 @@
-from players.player import Player
+from Skyjo.src.players.player import Player
 import random
 
 class RandomPlayer(Player):
