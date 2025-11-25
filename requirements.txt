@@ -1,3 +1,5 @@
 numpy
 pettingzoo
 pytest
+pytest-emoji
+pytest-md
