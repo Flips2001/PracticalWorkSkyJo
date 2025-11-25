@@ -2,7 +2,7 @@ from players.player import Player
 
 class HumanPlayer(Player):
     def select_action(self, observation, legal_actions):
-        if len(legal_actions) == 0:
+        if not legal_actions:
             raise ValueError("No legal actions available to select from.")
 
         print(f"Player {self.player_name}, it's your turn!")
