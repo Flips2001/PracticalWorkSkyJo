@@ -33,5 +33,5 @@ def test_random_player_select_action_no_legal_actions(random_player, mock_observ
 
     legal_actions = []
 
-    with pytest.raises(IndexError):
+    with pytest.raises(ValueError):
         random_player.select_action(mock_observation, legal_actions)
