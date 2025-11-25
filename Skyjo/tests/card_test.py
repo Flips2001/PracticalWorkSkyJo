@@ -1,5 +1,5 @@
 import pytest
-from card import Card
+from Skyjo.src.card import Card
 
 @pytest.fixture
 def card():
