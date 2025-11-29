@@ -18,7 +18,7 @@ class PlayerState:
         total_score = 0
         for row in self.grid:
             for card in row:
-                if card and not card.is_hidden:
+                if card.face_up:
                     total_score += card.value
         self.score = total_score
         return self.score
