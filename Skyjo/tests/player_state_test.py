@@ -1,5 +1,6 @@
 import pytest
 from Skyjo.src.card import Card
+from typing import List
 
 @pytest.fixture
 def player_state():
@@ -7,45 +8,46 @@ def player_state():
     return PlayerState(player_id=1)
 
 def test_initial_score(player_state):
-    assert player_state.score == 0
+    assert player_state.get_score() == 0
+
+def test_get_current_score_initial(player_state):
+    assert player_state.get_current_score() == 0
 
 def test_get_grid(player_state):
-    grid = [
-        [Card(1), Card(2)],
-        [Card(3), Card(4)]
-    ]
-    player_state.grid = grid
-    
-    assert player_state.get_grid() == grid
+    initial_grid = player_state.get_grid()
+    assert isinstance(initial_grid, List)
+    assert len(initial_grid) == 0  # Default grid should be empty list
 
-def test_calculate_score(player_state):
-    # Set up a grid with hidden cards
+def test_calculate_current_score(player_state):
+    # Set up a grid with some revealed and hidden cards
+
     player_state.grid = [
         [Card(5), Card(10), Card(3)],
         [Card(2), Card(7), Card(4)],
         [Card(1), Card(6), Card(8)]
     ]
-    # reveal some cards
+
     player_state.grid[0][0].reveal()
     player_state.grid[0][1].reveal()
     player_state.grid[1][0].reveal()
     player_state.grid[2][2].reveal()
     
     expected_score = 5 + 10 + 2 + 8  # Only revealed cards count
-    calculated_score = player_state.calculate_score()
+    calculated_score = player_state.calculate_current_score()   
     
     assert calculated_score == expected_score
-    assert player_state.score == expected_score
+    assert player_state.get_current_score() == expected_score
 
-def test_calculate_score_empty_grid(player_state):
-    player_state.grid = []
-    assert player_state.calculate_score() == 0
+def test_get_set_score(player_state):
+    player_state.set_score(25)
+    assert player_state.get_score() == 25
 
 def test_reset(player_state):
-    player_state.score = 50
+    player_state.set_score(-65)
     player_state.grid = [[Card(5)]]
+    
     player_state.reset()
     
-    assert player_state.score == 0
+    assert player_state.get_score() == 0
     assert player_state.grid == []
 
