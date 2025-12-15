@@ -21,7 +21,7 @@ class HumanPlayer(Player):
 
         print(f"Player {self.player_name}, it's your turn!")
         print("Your current grid:")
-        for row in observation.own_grid:
+        for row in observation.card_grid:
             print(" ".join(str(card) for card in row))
 
         print(f"\nTop of discard pile: {observation.discard_top}")

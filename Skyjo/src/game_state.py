@@ -1,7 +1,8 @@
 from dataclasses import dataclass
-from typing import List
+from typing import List, Optional
 from Skyjo.src.card import Card
 from Skyjo.src.player_state import PlayerState
+
 
 @dataclass
 class GameState:
@@ -20,10 +21,10 @@ class GameState:
         self.current_player_id = 0
         self.is_game_over = False
         self.all_player_scores = []
-    
+
     def create_deck(self) -> List[Card]:
         deck: List[Card] = []
-        #cards -1 to 12 (10 of each)
+        # cards -1 to 12 (10 of each)
         for _ in range(10):
             for value in range(-1, 13):
                 deck.append(Card(value))
@@ -33,9 +34,9 @@ class GameState:
         # 5 more cards with value 0 (15 in total)
         for _ in range(5):
             deck.append(Card(0))
-        return deck 
+        return deck
 
-    def get_discard_pile(self) -> List[Card]:
+    def get_discard_pile(self) -> List[Optional[Card]]:
         return self.discard_pile
 
     def get_draw_pile(self) -> List[Card]:
@@ -43,7 +44,7 @@ class GameState:
 
     def get_all_scores(self, player_states: List[PlayerState]) -> List[int]:
         return [player_state.get_score() for player_state in player_states]
-    
+
     def get_all_grids(self, player_states: List[PlayerState]) -> List[List[List[Card]]]:
         return [player_state.grid for player_state in player_states]
 
@@ -54,13 +55,15 @@ class GameState:
                 for card in row:
                     if not card.face_up:
                         return False
-        return True  
-    
+        return True
+
     def calculate_finished_round_stats(self, player_states: List[PlayerState]):
         self.all_player_scores = self.get_all_scores(player_states)
         self.round_number += 1
         for player_state in player_states:
-            player_state.set_score(player_state.get_score() + player_state.calculate_current_score())
+            player_state.set_score(
+                player_state.get_score() + player_state.calculate_current_score()
+            )
             player_state.reset()
 
     def game_over(self):
