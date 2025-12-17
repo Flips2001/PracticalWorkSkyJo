@@ -9,14 +9,13 @@ from Skyjo.src.turn_phase import TurnPhase
 class GameState:
     round_number: int
     discard_pile: List[Card]
-    deck: List[Card]
     draw_pile: List[Card]
     current_player_id: int
     is_game_over: bool
     all_player_scores: List[int]
 
     phase: TurnPhase
-    pending_card: Optional[Card]
+    hand_card: Optional[Card]
 
     def __init__(self):
         self.round_number = 1
@@ -27,7 +26,7 @@ class GameState:
         self.all_player_scores = []
 
         self.phase = TurnPhase.CHOOSE_DRAW
-        self.pending_card = None
+        self.hand_card = None
 
     def create_deck(self) -> List[Card]:
         deck: List[Card] = []
@@ -49,8 +48,8 @@ class GameState:
     def get_draw_pile(self) -> List[Card]:
         return self.draw_pile
 
-    def get_all_scores(self, player_states: List[PlayerState]) -> List[int]:
-        return [player_state.get_score() for player_state in player_states]
+    def get_all_game_scores(self, player_states: List[PlayerState]) -> List[int]:
+        return [player_state.get_game_score() for player_state in player_states]
 
     def get_all_grids(self, player_states: List[PlayerState]) -> List[List[List[Card]]]:
         return [player_state.grid for player_state in player_states]
@@ -78,11 +77,11 @@ class GameState:
         return True
 
     def calculate_finished_round_stats(self, player_states: List[PlayerState]):
-        self.all_player_scores = self.get_all_scores(player_states)
+        self.all_player_scores = self.get_all_game_scores(player_states)
         self.round_number += 1
         for player_state in player_states:
-            player_state.set_score(
-                player_state.get_score() + player_state.calculate_current_score()
+            player_state.set_game_score(
+                player_state.get_game_score() + player_state.get_round_score()
             )
             player_state.reset()
 

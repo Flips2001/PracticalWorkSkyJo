@@ -1,8 +1,9 @@
+from Skyjo.src.observation import Observation
 from Skyjo.src.players.player import Player
 
 
 class HumanPlayer(Player):
-    def select_action(self, observation, legal_actions):
+    def select_action(self, observation: Observation, legal_actions):
         """
         Prompt the human player to select an action from the list of legal actions.
         Displays the player's current grid, the top of the discard pile, and the available legal actions.
@@ -24,7 +25,10 @@ class HumanPlayer(Player):
         for row in observation.card_grid:
             print(" ".join(str(card) for card in row))
 
-        print(f"\nTop of discard pile: {observation.discard_top}")
+        print(f"\nYour hand card: {observation.hand_card}")
+        print(f"Top of discard pile: {observation.discard_top}")
+
+        print(f"\nYour score: {observation.scores[observation.player_id]}")
 
         print("\nLegal actions:")
         for i, action in enumerate(legal_actions):
@@ -32,7 +36,7 @@ class HumanPlayer(Player):
 
         while True:
             try:
-                choice = int(input("Select the number of your action: "))
+                choice = int(input("\nSelect the number of your action: "))
                 if 0 <= choice < len(legal_actions):
                     return legal_actions[choice]
                 else:

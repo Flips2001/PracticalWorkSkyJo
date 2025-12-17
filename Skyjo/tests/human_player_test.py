@@ -19,6 +19,9 @@ def mock_observation(card):
         def __init__(self):
             self.card_grid = [[card, card], [card, card]]
             self.discard_top = card
+            self.hand_card = None
+            self.scores = [10]
+            self.player_id = 0
 
     return MockObservation()
 

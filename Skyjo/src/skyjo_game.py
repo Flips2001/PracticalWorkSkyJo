@@ -1,3 +1,5 @@
+import copy
+
 from Skyjo.src.action import Action
 from Skyjo.src.action_type import ActionType
 from Skyjo.src.card import Card
@@ -50,7 +52,7 @@ class SkyjoGame:
         """
         opponent_scores = []
         for p in self.players:
-            opponent_scores.append(p.player_state.get_score())
+            opponent_scores.append(p.player_state.get_round_score())
         return opponent_scores
 
     def get_observation(self, player: Player) -> Observation:
@@ -62,11 +64,12 @@ class SkyjoGame:
 
         return Observation(
             player_id=player.player_id,
-            card_grid=player.player_state.get_grid(),
+            card_grid=copy.deepcopy(player.player_state.get_grid()),
             scores=self.get_players_scores(),
+            hand_card=self.game_state.hand_card,
             opponent_cards=self.get_opponent_players_cards(player),
             discard_top=(
-                self.game_state.discard_pile[0]
+                self.game_state.discard_pile[-1]
                 if len(self.game_state.discard_pile) > 0
                 else None
             ),
@@ -93,28 +96,101 @@ class SkyjoGame:
                 # If a card is in hand, allow swapping it with any grid position
                 for pos in player.player_state.get_all_positions():
                     legal.append(Action(ActionType.SWAP_CARD, pos=pos))
-
-                # If discarding the drawn card is allowed, represent the follow-up flip.
-                for pos in player.player_state.get_all_positions():
-                    legal.append(Action(ActionType.DISCARD_AND_FLIP_CARD, pos=pos))
+                # Allow discarding the drawn card only if there exists at least one hidden card to flip afterwards
+                if player.player_state.get_hidden_positions():
+                    legal.append(Action(ActionType.DISCARD_CARD))
                 return legal
 
-        if self.game_state.phase == TurnPhase.END_TURN:
-            return []
+            case TurnPhase.HAVE_TO_FLIP_AFTER_DISCARD:
+                # Must choose a hidden card to flip
+                for pos in player.player_state.get_hidden_positions():
+                    legal.append(Action(ActionType.FLIP_CARD, pos=pos))
+                return legal
+
+            case TurnPhase.END_TURN:
+                return []
 
         return legal
+
+    def execute_action(self, player: Player, action: Action) -> None:
+        """
+        Execute the selected action for the given player, mutating game state
+        and advancing the turn phase accordingly.
+        """
+
+        # Start of turn: choose draw source
+        match action.type:
+            case ActionType.DRAW_HIDDEN_CARD:
+                assert (
+                    self.game_state.draw_pile is not None
+                ), "Attempted to draw from empty draw pile"
+                self.game_state.hand_card = self.game_state.draw_pile.pop()
+                self.game_state.hand_card.reveal()
+                self.game_state.phase = TurnPhase.HAVE_DRAWN
+                return
+
+            case ActionType.DRAW_OPEN_CARD:
+                if self.game_state.phase == TurnPhase.CHOOSE_DRAW:
+                    assert (
+                        self.game_state.discard_pile is not None
+                    ), "Attempted to draw from empty discard pile"
+                    self.game_state.hand_card = self.game_state.discard_pile.pop()
+                    self.game_state.phase = TurnPhase.HAVE_DRAWN
+                    return
+
+            # After drawing: either swap the pending card into grid, or discard then flip
+            case ActionType.SWAP_CARD:
+                if action.pos is None or self.game_state.hand_card is None:
+                    raise RuntimeError("Attempted to swap card from empty position")
+                r, c = action.pos
+                incoming = self.game_state.hand_card
+                incoming.reveal()
+                outgoing = player.player_state.grid[r][c]
+                if outgoing is not None:  # Theoretically should never be None
+                    outgoing.reveal()
+                    self.game_state.discard_pile.append(outgoing)
+                player.player_state.grid[r][c] = incoming
+                self.game_state.hand_card = None
+                self.game_state.phase = TurnPhase.END_TURN
+                return
+
+            case ActionType.DISCARD_CARD:
+                hand_card = self.game_state.hand_card
+                assert hand_card is not None, "No pending card to discard"
+                # Discard the drawn card, then force a flip
+                hand_card.reveal()
+                self.game_state.discard_pile.append(hand_card)
+                self.game_state.hand_card = None
+                self.game_state.phase = TurnPhase.HAVE_TO_FLIP_AFTER_DISCARD
+                return
+
+            # After discarding, must flip a hidden grid card
+            case ActionType.FLIP_CARD:
+                assert (
+                    action.pos is not None
+                ), "Attempted to flip card from empty position"
+                r, c = action.pos
+                card = player.player_state.grid[r][c]
+                if card is not None and card.is_hidden():
+                    card.reveal()
+                self.game_state.phase = TurnPhase.END_TURN
+                return
+
+        return
 
     def turn(self, player: Player):
         """
         Plays one full turn for the given player.
         """
-        observation = self.get_observation(player)
-        legal_actions = self.get_legal_actions(player)
-        selected_action = player.select_action(
-            observation=observation, legal_actions=legal_actions
-        )
-        print(selected_action)
-        pass
+        # Keep asking for actions until the turn is ended by the executed action
+        while self.game_state.phase != TurnPhase.END_TURN:
+            observation = self.get_observation(player)
+            legal_actions = self.get_legal_actions(player)
+            selected_action = player.select_action(
+                observation=observation, legal_actions=legal_actions
+            )
+            self.execute_action(player, selected_action)
+        self.game_state.phase = TurnPhase.CHOOSE_DRAW
 
     def player_turn(self, player_state: PlayerState):
         pass

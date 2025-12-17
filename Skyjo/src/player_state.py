@@ -16,23 +16,20 @@ class PlayerState:
     def get_grid(self) -> List[List[Card]]:
         return self.grid
 
-    def get_score(self) -> int:
+    def get_game_score(self) -> int:
         return self.__score
 
-    def set_score(self, score: int):
+    def set_game_score(self, score: int):
         self.__score = score
 
-    def get_current_score(self) -> int:
-        return self.__current_score
-
-    def calculate_current_score(self) -> int:
-        total_score = 0
+    def get_round_score(self) -> int:
+        score = 0
         for row in self.grid:
             for card in row:
                 if card.face_up:
-                    total_score += card.value
-        self.__current_score = total_score
-        return total_score
+                    score += card.value
+        self.__current_score = score
+        return score
 
     def get_hidden_positions(self) -> List[Pos]:
         """
