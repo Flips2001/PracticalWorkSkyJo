@@ -1,3 +1,5 @@
+from Skyjo.src.action import Action
+from Skyjo.src.action_type import ActionType
 from Skyjo.src.card import Card
 from Skyjo.src.game_state import GameState
 from Skyjo.src.observation import Observation
@@ -5,6 +7,8 @@ from Skyjo.src.player_state import PlayerState
 from Skyjo.src.players.player import Player
 
 from typing import List, Optional
+
+from Skyjo.src.turn_phase import TurnPhase
 
 
 class SkyjoGame:
@@ -14,6 +18,8 @@ class SkyjoGame:
         self.num_players = 0
 
     def add_player(self, player: Player):
+        player_grid = self.game_state.get_new_player_grid()
+        player.player_state.grid = player_grid
         self.players.append(player)
         self.num_players += 1
 
@@ -67,13 +73,47 @@ class SkyjoGame:
             draw_pile_size=len(self.game_state.draw_pile),
         )
 
+    def get_legal_actions(self, player: Player) -> List[Action]:
+        """
+        Determines the legal actions for the given player based on the current game state.
+        :param player: Player for whom to determine legal actions
+        :return: list of legal actions
+        """
+        legal: List[Action] = []
+
+        match self.game_state.phase:
+            case TurnPhase.CHOOSE_DRAW:
+                if self.game_state.draw_pile:
+                    legal.append(Action(ActionType.DRAW_HIDDEN_CARD))
+                if self.game_state.discard_pile:
+                    legal.append(Action(ActionType.DRAW_OPEN_CARD))
+                return legal
+
+            case TurnPhase.HAVE_DRAWN:
+                # If a card is in hand, allow swapping it with any grid position
+                for pos in player.player_state.get_all_positions():
+                    legal.append(Action(ActionType.SWAP_CARD, pos=pos))
+
+                # If discarding the drawn card is allowed, represent the follow-up flip.
+                for pos in player.player_state.get_all_positions():
+                    legal.append(Action(ActionType.DISCARD_AND_FLIP_CARD, pos=pos))
+                return legal
+
+        if self.game_state.phase == TurnPhase.END_TURN:
+            return []
+
+        return legal
+
     def turn(self, player: Player):
         """
         Plays one full turn for the given player.
         """
-        # observation = self.get_observation(player)
-        # TODO: Get legal actions for current player
-        # selected_action = player.select_action(None)
+        observation = self.get_observation(player)
+        legal_actions = self.get_legal_actions(player)
+        selected_action = player.select_action(
+            observation=observation, legal_actions=legal_actions
+        )
+        print(selected_action)
         pass
 
     def player_turn(self, player_state: PlayerState):

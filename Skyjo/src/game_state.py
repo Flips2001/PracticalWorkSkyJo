@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import List, Optional
 from Skyjo.src.card import Card
 from Skyjo.src.player_state import PlayerState
+from Skyjo.src.turn_phase import TurnPhase
 
 
 @dataclass
@@ -14,6 +15,9 @@ class GameState:
     is_game_over: bool
     all_player_scores: List[int]
 
+    phase: TurnPhase
+    pending_card: Optional[Card]
+
     def __init__(self):
         self.round_number = 1
         self.discard_pile = []
@@ -21,6 +25,9 @@ class GameState:
         self.current_player_id = 0
         self.is_game_over = False
         self.all_player_scores = []
+
+        self.phase = TurnPhase.CHOOSE_DRAW
+        self.pending_card = None
 
     def create_deck(self) -> List[Card]:
         deck: List[Card] = []
@@ -47,6 +54,19 @@ class GameState:
 
     def get_all_grids(self, player_states: List[PlayerState]) -> List[List[List[Card]]]:
         return [player_state.grid for player_state in player_states]
+
+    def get_new_player_grid(self) -> List[List[Card]]:
+        """
+        Generates a new 3x4 grid of cards for a player by drawing from the draw pile.
+        :return: A 3x4 grid (list of lists) of Card objects.
+        """
+        grid: List[List[Card]] = []
+        for _ in range(3):
+            row: List[Card] = []
+            for _ in range(4):
+                row.append(self.draw_pile.pop())
+            grid.append(row)
+        return grid
 
     def is_round_over(self, player_states: List[PlayerState]) -> bool:
         allgrids = self.get_all_grids(player_states)

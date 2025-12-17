@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
+
+from Skyjo.src.action import Action
 from Skyjo.src.observation import Observation
-from Skyjo.src.action_type import ActionType
 from Skyjo.src.player_state import PlayerState
 from typing import List
 
@@ -18,8 +19,8 @@ class Player(ABC):
 
     @abstractmethod
     def select_action(
-        self, observation: Observation, legal_actions: List[ActionType]
-    ) -> ActionType:
+        self, observation: Observation, legal_actions: List[Action]
+    ) -> Action:
         """
         Decide which action to take, given what this player observes
         and which actions are legal.
