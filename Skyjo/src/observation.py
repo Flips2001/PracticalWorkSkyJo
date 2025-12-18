@@ -7,11 +7,13 @@ from typing import List, Optional
 class Observation:
     player_id: int
     # Own cards laid out as a grid of Card objects
-    own_grid: List[List[Card]]
+    card_grid: List[List[Card]]
+    # Own hand card (if any)
+    hand_card: Optional[Card]
     # Public info about other players (you can refine later)
-    visible_opponent_cards: List[List[List[Optional[Card]]]]
-    # scores or card counts for others
-    opponent_scores: List[int]
+    opponent_cards: List[Optional[List[List[Card]]]]
+    # scores of all players
+    scores: List[int]
     # Public game info
     discard_top: Optional[Card]
-    deck_size: int
+    draw_pile_size: int

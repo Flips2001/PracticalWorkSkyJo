@@ -17,8 +17,11 @@ def card():
 def mock_observation(card):
     class MockObservation:
         def __init__(self):
-            self.own_grid = [[card, card], [card, card]]
+            self.card_grid = [[card, card], [card, card]]
             self.discard_top = card
+            self.hand_card = None
+            self.scores = [10]
+            self.player_id = 0
 
     return MockObservation()
 
