@@ -197,8 +197,8 @@ class SkyjoGame:
 
     def reset(self):
         self.game_state = GameState()
-        for player_state in self.player_states:
-            player_state.reset()
+        for player in self.players:
+            player.player_state.reset()
 
     def play_round(self):
         self.reset()

@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from Skyjo.src.card import Card
-from typing import List, Optional, Tuple
+from typing import List, Tuple
 
 Pos = Tuple[int, int]
 
@@ -9,7 +9,6 @@ Pos = Tuple[int, int]
 class PlayerState:
     player_id: int
     grid: List[List[Card]] = field(default_factory=list)
-    hand_card: Optional[Card] = None
     __score: int = 0
     __current_score: int = 0
 
