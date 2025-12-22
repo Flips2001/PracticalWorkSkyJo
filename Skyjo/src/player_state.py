@@ -9,17 +9,16 @@ Pos = Tuple[int, int]
 class PlayerState:
     player_id: int
     grid: List[List[Card]] = field(default_factory=list)
-    __score: int = 0
-    __current_score: int = 0
+    __final_score: int = 0
 
     def get_grid(self) -> List[List[Card]]:
         return self.grid
 
-    def get_game_score(self) -> int:
-        return self.__score
+    def get_final_game_score(self) -> int:
+        return self.__final_score
 
-    def set_game_score(self, score: int):
-        self.__score = score
+    def set_final_game_score(self, final_score: int):
+        self.__final_score = final_score
 
     def get_round_score(self) -> int:
         score = 0
@@ -27,7 +26,6 @@ class PlayerState:
             for card in row:
                 if card.face_up:
                     score += card.value
-        self.__current_score = score
         return score
 
     def get_hidden_positions(self) -> List[Pos]:
@@ -54,6 +52,9 @@ class PlayerState:
                     pos.append((r, c))
         return pos
 
-    def reset(self):
-        self.__score = 0
+    def reset_round(self, new_grid):
+        self.grid = new_grid
+
+    def reset_game(self):
+        self.__final_score = 0
         self.grid = []

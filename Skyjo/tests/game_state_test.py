@@ -16,6 +16,9 @@ def test_initial_game_state(game_state):
     assert game_state.is_game_over is False
     assert game_state.discard_pile == []
     assert game_state.draw_pile != []  # Deck should be created on init
+    assert game_state.all_player_final_scores == []
+    assert game_state.final_turn_phase is False
+    assert game_state.phase.name == "CHOOSE_DRAW"
 
 
 def test_create_deck(game_state):
@@ -32,50 +35,30 @@ def test_create_deck(game_state):
     assert value_counts[-1] == 10
 
 
-def test_is_round_over(game_state):
-
+def test_finish_round_and_calculate_stats(game_state):
     player1 = PlayerState(player_id=1)
     player2 = PlayerState(player_id=2)
 
-    # Set up grids with all cards face-up
-    player1.grid = [[Card(5) for _ in range(3)] for _ in range(3)]
-    player2.grid = [[Card(10) for _ in range(3)] for _ in range(3)]
-    for row in player1.grid:
-        for card in row:
-            card.reveal()
-    for row in player2.grid:
-        for card in row:
-            card.reveal()
+    player1.set_final_game_score(50)
+    player2.set_final_game_score(70)
 
-    assert game_state.is_round_over([player1, player2]) is True
+    game_state.finish_round_and_calculate_stats([player1, player2])
 
-    # Now hide one card
-    player1.grid[0][0] = Card(5)  # New card, face-down by default
-    assert game_state.is_round_over([player1, player2]) is False
-
-
-def test_calculate_finished_round_stats(game_state):
-    player1 = PlayerState(player_id=1)
-    player2 = PlayerState(player_id=2)
-
-    player1.set_game_score(30)
-    player2.set_game_score(45)
-
-    game_state.calculate_finished_round_stats([player1, player2])
-
-    assert game_state.all_player_scores == [30, 45]
     assert game_state.round_number == 2
+    assert game_state.all_player_final_scores == [50, 70]
 
 
-def test_get_all_scores(game_state):
+def test_set_final_game_scores(game_state):
     player1 = PlayerState(player_id=1)
     player2 = PlayerState(player_id=2)
 
-    player1.set_game_score(20)
-    player2.set_game_score(35)
+    player1.set_final_game_score(80)
+    player2.set_final_game_score(90)
 
-    scores = game_state.get_all_game_scores([player1, player2])
-    assert scores == [20, 35]
+    game_state.all_player_final_scores = game_state.get_all_final_game_scores(
+        [player1, player2]
+    )
+    assert game_state.all_player_final_scores == [80, 90]
 
 
 def test_get_all_grids(game_state):
@@ -92,23 +75,6 @@ def test_get_all_grids(game_state):
     ]
 
 
-def test_game_over(game_state):
-    player1 = PlayerState(player_id=1)
-    player2 = PlayerState(player_id=2)
-
-    player1.set_game_score(95)
-    player2.set_game_score(85)
-
-    game_state.all_player_scores = game_state.get_all_game_scores([player1, player2])
-    game_state.game_over()
-    assert game_state.is_game_over is False
-
-    player1.set_game_score(105)
-    game_state.all_player_scores = game_state.get_all_game_scores([player1, player2])
-    game_state.game_over()
-    assert game_state.is_game_over is True
-
-
 def test_get_discard_pile(game_state):
     discard_pile = game_state.get_discard_pile()
     assert discard_pile == []  # Initially empty
@@ -123,5 +89,5 @@ def test_round_number_increment(game_state):
     initial_round = game_state.round_number
     player1 = PlayerState(player_id=1)
     player2 = PlayerState(player_id=2)
-    game_state.calculate_finished_round_stats([player1, player2])
+    game_state.finish_round_and_calculate_stats([player1, player2])
     assert game_state.round_number == initial_round + 1

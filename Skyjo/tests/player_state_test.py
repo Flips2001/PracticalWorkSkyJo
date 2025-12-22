@@ -11,7 +11,7 @@ def player_state():
 
 
 def test_initial_game_score(player_state):
-    assert player_state.get_game_score() == 0
+    assert player_state.get_final_game_score() == 0
 
 
 def test_get_round_score_initial(player_state):
@@ -46,15 +46,20 @@ def test_calculate_current_score(player_state):
 
 
 def test_get_set_game_score(player_state):
-    player_state.set_game_score(25)
-    assert player_state.get_game_score() == 25
+    player_state.set_final_game_score(25)
+    assert player_state.get_final_game_score() == 25
 
 
-def test_reset(player_state):
-    player_state.set_game_score(-65)
-    player_state.grid = [[Card(5)]]
-
-    player_state.reset()
-
-    assert player_state.get_game_score() == 0
-    assert player_state.grid == []
+def test_reset_round(player_state):
+    player_state.grid = [
+        [Card(5), Card(10), Card(3)],
+        [Card(2), Card(7), Card(4)],
+        [Card(1), Card(6), Card(8)],
+    ]
+    new_grid = [
+        [Card(0), Card(0), Card(0)],
+        [Card(0), Card(0), Card(0)],
+        [Card(0), Card(0), Card(0)],
+    ]
+    player_state.reset_round(new_grid)
+    assert player_state.get_grid() == new_grid
