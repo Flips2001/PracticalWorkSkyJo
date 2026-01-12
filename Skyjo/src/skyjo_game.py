@@ -190,6 +190,7 @@ class SkyjoGame:
                 observation=observation, legal_actions=legal_actions
             )
             self.execute_action(player, selected_action)
+            self.game_state.remove_unfiorm_columns_to_discard_pile(player.player_state)
         self.game_state.phase = TurnPhase.CHOOSE_DRAW
 
     def reset(self):

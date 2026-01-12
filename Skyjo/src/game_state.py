@@ -55,7 +55,44 @@ class GameState:
 
     def get_all_grids(self, player_states: List[PlayerState]) -> List[List[List[Card]]]:
         return [player_state.grid for player_state in player_states]
+    
+    def is_column_uniform(self, player_state: PlayerState, col: int) -> bool:
+        """
+        Check if all cards in a given column are the same value and face-up.
+        :param player_state: The PlayerState containing the grid to check.
+        :param col: The column index to check (0-3).
+        :return: True if all cards in the column are the same value and face-up, False otherwise.
+        """
+        grid = player_state.get_grid()
+        first_card = grid[0][col]
+        if not first_card.face_up:
+            return False
+        for row in range(1, len(grid)):
+            card = grid[row][col]
+            if not card.face_up or card.value != first_card.value:
+                return False
+        return True
 
+    def remove_unfiorm_columns_to_discard_pile(self, player_state: PlayerState):
+        """
+        Remove columns from the player's grid where all cards are the same value and face-up.
+        :param player_state: The PlayerState containing the grid to modify.
+        """
+        grid = player_state.get_grid()
+        if not grid or not grid[0]:
+            return
+        
+        num_cols = len(grid[0])
+        num_rows = len(grid)
+
+        cols_to_remove = [
+            col for col in range(num_cols)
+            if self.is_column_uniform(player_state, col)
+        ]
+        for col in reversed(cols_to_remove):
+            for row in range(num_rows):
+                self.discard_pile.append(grid[row].pop(col))
+          
     def get_new_player_grid(self) -> List[List[Card]]:
         """
         Generates a new 3x4 grid of cards for a player by drawing from the draw pile.
