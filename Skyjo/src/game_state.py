@@ -1,3 +1,4 @@
+import random
 from dataclasses import dataclass
 from typing import List, Optional
 from Skyjo.src.card import Card
@@ -40,6 +41,7 @@ class GameState:
         # 5 more cards with value 0 (15 in total)
         for _ in range(5):
             deck.append(Card(0))
+        random.shuffle(deck)
         return deck
 
     def get_discard_pile(self) -> List[Optional[Card]]:
