@@ -91,14 +91,20 @@ class SkyjoGame:
                 if self.game_state.discard_pile:
                     legal.append(Action(ActionType.DRAW_OPEN_CARD))
                 return legal
-
-            case TurnPhase.HAVE_DRAWN:
+            
+            case TurnPhase.HAVE_DRAWN_HIDDEN:
                 # If a card is in hand, allow swapping it with any grid position
                 for pos in player.player_state.get_all_positions():
                     legal.append(Action(ActionType.SWAP_CARD, pos=pos))
                 # Allow discarding the drawn card only if there exists at least one hidden card to flip afterwards
                 if player.player_state.get_hidden_positions():
                     legal.append(Action(ActionType.DISCARD_CARD))
+                return legal
+            
+            case TurnPhase.HAVE_DRAWN_OPEN:
+                # If a card is in hand, allow swapping it with any grid position
+                for pos in player.player_state.get_all_positions():
+                    legal.append(Action(ActionType.SWAP_CARD, pos=pos))               
                 return legal
 
             case TurnPhase.HAVE_TO_FLIP_AFTER_DISCARD:
@@ -126,7 +132,7 @@ class SkyjoGame:
                 ), "Attempted to draw from empty draw pile"
                 self.game_state.hand_card = self.game_state.draw_pile.pop()
                 self.game_state.hand_card.reveal()
-                self.game_state.phase = TurnPhase.HAVE_DRAWN
+                self.game_state.phase = TurnPhase.HAVE_DRAWN_HIDDEN
                 return
 
             case ActionType.DRAW_OPEN_CARD:
@@ -135,7 +141,7 @@ class SkyjoGame:
                         self.game_state.discard_pile is not None
                     ), "Attempted to draw from empty discard pile"
                     self.game_state.hand_card = self.game_state.discard_pile.pop()
-                    self.game_state.phase = TurnPhase.HAVE_DRAWN
+                    self.game_state.phase = TurnPhase.HAVE_DRAWN_OPEN
                     return
 
             # After drawing: either swap the pending card into grid, or discard then flip
