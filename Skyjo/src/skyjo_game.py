@@ -220,6 +220,9 @@ class SkyjoGame:
         self.game_state.final_turn_phase = False
         self.game_state.players_to_finish = set()
 
+        self.start_round()
+        self.game_state.discard_pile.append(self.game_state.draw_pile.pop())
+        self.game_state.discard_pile[-1].reveal()
         round_over = False
         while not round_over:
             for idx, player in enumerate(self.players):
