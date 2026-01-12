@@ -192,22 +192,50 @@ class SkyjoGame:
             self.execute_action(player, selected_action)
         self.game_state.phase = TurnPhase.CHOOSE_DRAW
 
-    def player_turn(self, player_state: PlayerState):
-        pass
-
     def reset(self):
         self.game_state = GameState()
         for player in self.players:
             player.player_state.reset()
 
-    def play_round(self):
-        self.reset()
+    def play_game(self):
         while not self.game_state.is_game_over:
-            while not self.game_state.is_round_over(self.get_all_player_states()):
-                for player in self.players:
-                    self.turn(player)
-                    if self.game_state.is_round_over(self.get_all_player_states()):
-                        break
-
-            self.game_state.calculate_finished_round_stats(self.get_all_player_states())
+            self.play_round()
             self.game_state.game_over()
+
+        print("Game over. Final scores:", self.game_state.all_player_final_scores)
+
+    def play_round(self):
+        # Reset the final turn phase at the start of the round
+        self.game_state.final_turn_phase = False
+        self.game_state.players_to_finish = set()
+
+        round_over = False
+        while not round_over:
+            for idx, player in enumerate(self.players):
+                # If round is over according to our new rules, skip extra turns
+                if self.game_state.is_round_over(self.get_all_player_states()):
+                    round_over = True
+                    break
+
+                # Player takes their turn
+                self.turn(player)
+
+                # If in final turn phase, mark this player as done
+                if (
+                    self.game_state.final_turn_phase
+                    and idx in self.game_state.players_to_finish
+                ):
+                    self.game_state.players_to_finish.remove(idx)
+
+            # After going through all players, check round status again
+            if self.game_state.is_round_over(self.get_all_player_states()):
+                round_over = True
+
+        # Reveal all cards at end of round
+        for player_state in self.get_all_player_states():
+            for row in player_state.grid:
+                for card in row:
+                    card.face_up = True
+
+        # Finish scoring and prepare for next round
+        self.game_state.finish_round_and_calculate_stats(self.get_all_player_states())
