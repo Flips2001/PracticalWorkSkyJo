@@ -16,6 +16,17 @@ class Player(ABC):
         self.player_id = player_id
         self.player_name = player_name
         self.player_state = PlayerState(player_id)
+    
+
+    @abstractmethod
+    def select_starting_flips(self, hidden_positions, count=2) -> List:
+        pass
+        """
+        Pick which hidden positions to flip at the start of the round.
+        For AI, this can be random or strategy-based.
+        For humans, the UI will handle selection.
+        """
+        
 
     @abstractmethod
     def select_action(

@@ -28,6 +28,14 @@ class PlayerState:
                     score += card.value
         return score
 
+    def get_highest_revealed_card(self) -> int:
+        highest = -float('inf')
+        for row in self.grid:
+            for card in row:
+                if card.face_up and card.value > highest:
+                    highest = card.value
+        return highest if highest != -float('inf') else 0
+    
     def get_hidden_positions(self) -> List[Pos]:
         """
         Get positions of all hidden cards in the player's grid.

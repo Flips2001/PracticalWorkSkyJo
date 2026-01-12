@@ -123,7 +123,6 @@ class SkyjoGame:
         Execute the selected action for the given player, mutating game state
         and advancing the turn phase accordingly.
         """
-
         # Start of turn: choose draw source
         match action.type:
             case ActionType.DRAW_HIDDEN_CARD:
@@ -143,7 +142,6 @@ class SkyjoGame:
                     self.game_state.hand_card = self.game_state.discard_pile.pop()
                     self.game_state.phase = TurnPhase.HAVE_DRAWN_OPEN
                     return
-
             # After drawing: either swap the pending card into grid, or discard then flip
             case ActionType.SWAP_CARD:
                 if action.pos is None or self.game_state.hand_card is None:
@@ -178,16 +176,70 @@ class SkyjoGame:
                 r, c = action.pos
                 card = player.player_state.grid[r][c]
                 if card is not None and card.is_hidden():
-                    card.reveal()
+                    card.reveal()            
                 self.game_state.phase = TurnPhase.END_TURN
                 return
-
         return
+
+    def start_round(self):
+        self.game_state.phase = TurnPhase.START_ROUND
+        self.game_state.round_start_flips = {i: 0 for i in range(len(self.players))}  # reset
+
+        # Step 1: each player flips 2 cards
+        for player in self.players:
+            hidden_positions = player.player_state.get_hidden_positions()
+            # UI should let player choose 2 positions
+            chosen = player.select_starting_flips(hidden_positions, count=2)
+
+            for pos in chosen:
+                r, c = pos
+                card = player.player_state.grid[r][c]
+                card.reveal()
+
+        # Step 2: determine starting player
+        self.game_state.current_player_id = self._determine_starting_player()
+
+        # Step 3: transition to first real turn
+        self.game_state.phase = TurnPhase.CHOOSE_DRAW
+                
+    def _determine_starting_player(self) -> int:
+        """
+        Determine which player starts this round:
+        - Primary: highest total score of flipped cards
+        - Tie-breaker: highest individual card among flipped cards
+        Returns the index of the starting player in self.players
+        """
+        best_index = 0
+        best_score = float("-inf")
+        best_highest_card = float("-inf")
+
+        for i, player in enumerate(self.players):
+            # Sum of the revealed cards for this round
+            score = player.player_state.get_round_score()
+
+            # Highest individual revealed card for tie-break
+            highest_card = player.player_state.get_highest_revealed_card()
+
+            print(f"Player {player.player_name} has score {score}, highest card {highest_card}")
+
+            # Choose starting player
+            if score > best_score:
+                best_score = score
+                best_highest_card = highest_card
+                best_index = i
+            elif score == best_score:
+                # Tie-breaker by highest individual card
+                if highest_card > best_highest_card:
+                    best_highest_card = highest_card
+                    best_index = i
+
+        print(f"{self.players[best_index].player_name} will start this round")
+        return best_index
 
     def turn(self, player: Player):
         """
         Plays one full turn for the given player.
-        """
+        """     
         # Keep asking for actions until the turn is ended by the executed action
         while self.game_state.phase != TurnPhase.END_TURN:
             observation = self.get_observation(player)
@@ -223,34 +275,29 @@ class SkyjoGame:
         self.start_round()
         self.game_state.discard_pile.append(self.game_state.draw_pile.pop())
         self.game_state.discard_pile[-1].reveal()
+
         round_over = False
+        num_players = len(self.players)
+
         while not round_over:
-            for idx, player in enumerate(self.players):
-                # If round is over according to our new rules, skip extra turns
-                if self.game_state.is_round_over(self.get_all_player_states()):
-                    round_over = True
-                    break
+            current_player = self.players[self.game_state.current_player_id]
+            
+            # Player takes their turn
+            self.turn(current_player)
 
-                # Player takes their turn
-                self.turn(player)
+            # Mark player done if in final turn phase
+            if (
+                self.game_state.final_turn_phase
+                and self.game_state.current_player_id in self.game_state.players_to_finish
+            ):
+                self.game_state.players_to_finish.remove(self.game_state.current_player_id)
 
-                # If in final turn phase, mark this player as done
-                if (
-                    self.game_state.final_turn_phase
-                    and idx in self.game_state.players_to_finish
-                ):
-                    self.game_state.players_to_finish.remove(idx)
+            # Advance to next player
+            self.game_state.current_player_id = (self.game_state.current_player_id + 1) % num_players
 
-            # After going through all players, check round status again
+            # Check if the round is over
             if self.game_state.is_round_over(self.get_all_player_states()):
                 round_over = True
 
         # Reveal all cards at end of round
-        for player_state in self.get_all_player_states():
-            for row in player_state.grid:
-                for card in row:
-                    card.face_up = True
-
-        # Finish scoring and prepare for next round
-        self.game_state.finish_round_and_calculate_stats(self.get_all_player_states())
         self.reset()

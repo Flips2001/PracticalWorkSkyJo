@@ -3,6 +3,10 @@ from enum import Enum
 
 
 class TurnPhase(Enum):
+
+    START_ROUND = (
+        1
+    ) # at start of game: flip any 2 cards to begin
     CHOOSE_DRAW = (
         2  # start of turn: choose from draw pile (hidden) or take open discard
     )

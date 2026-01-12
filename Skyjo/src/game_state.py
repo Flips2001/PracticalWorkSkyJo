@@ -16,7 +16,8 @@ class GameState:
     all_player_final_scores: List[int]
     final_turn_phase: bool
     phase: TurnPhase
-    hand_card: Optional[Card]
+    hand_card: Optional[Card]    
+    round_start_flips: dict[int, int] 
 
     def __init__(self):
         self.round_number = 1
@@ -28,6 +29,7 @@ class GameState:
         self.final_turn_phase = False
         self.phase = TurnPhase.CHOOSE_DRAW
         self.hand_card = None
+        self.round_start_flips: dict[int, int] = {}  # player_id -> flips done this round
 
     def create_deck(self) -> List[Card]:
         deck: List[Card] = []
@@ -143,6 +145,8 @@ class GameState:
             new_grid = self.get_new_player_grid()
             player_state.reset_round(new_grid)
         self.round_number += 1
+        self.draw_pile = self.create_deck()
+        self.discard_pile = []
 
     def game_over(self):
         if any(score >= 100 for score in self.all_player_final_scores):
