@@ -194,9 +194,13 @@ class SkyjoGame:
         self.game_state.phase = TurnPhase.CHOOSE_DRAW
 
     def reset(self):
-        self.game_state = GameState()
-        for player in self.players:
-            player.player_state.reset()
+        for player_state in self.get_all_player_states():
+            for row in player_state.grid:
+                for card in row:
+                    card.face_up = True
+
+        # Finish scoring and prepare for next round
+        self.game_state.finish_round_and_calculate_stats(self.get_all_player_states())
 
     def play_game(self):
         while not self.game_state.is_game_over:
@@ -240,3 +244,4 @@ class SkyjoGame:
 
         # Finish scoring and prepare for next round
         self.game_state.finish_round_and_calculate_stats(self.get_all_player_states())
+        self.reset()
