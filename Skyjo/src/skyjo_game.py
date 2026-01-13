@@ -184,7 +184,9 @@ class SkyjoGame:
     def start_round(self):
         self.game_state.phase = TurnPhase.START_ROUND
         self.game_state.round_start_flips = {i: 0 for i in range(len(self.players))}  # reset
-
+        self.game_state.final_turn_phase = False      
+        self.game_state.first_finisher_id = None      
+        self.game_state.players_to_finish = set()     
         # Step 1: each player flips 2 cards
         for player in self.players:
             hidden_positions = player.player_state.get_hidden_positions()

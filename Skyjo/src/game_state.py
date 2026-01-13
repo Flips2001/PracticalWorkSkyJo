@@ -18,6 +18,7 @@ class GameState:
     phase: TurnPhase
     hand_card: Optional[Card]    
     round_start_flips: dict[int, int] 
+    first_finisher_id: Optional[int]  # NEW: tracks the first player who finishes
 
     def __init__(self):
         self.round_number = 1
@@ -30,6 +31,7 @@ class GameState:
         self.phase = TurnPhase.CHOOSE_DRAW
         self.hand_card = None
         self.round_start_flips: dict[int, int] = {}  # player_id -> flips done this round
+        self.first_finisher_id = None  # Initialize first finisher as None
 
     def create_deck(self) -> List[Card]:
         deck: List[Card] = []
@@ -160,6 +162,7 @@ class GameState:
                 # Start final turn phase if not already started
                 if not self.final_turn_phase:
                     self.final_turn_phase = True
+                    self.first_finisher_id = i 
                     # All other players get one last move
                     self.players_to_finish = set(
                         j for j in range(len(player_states)) if j != i
@@ -174,11 +177,20 @@ class GameState:
         return False
 
     def finish_round_and_calculate_stats(self, player_states: List[PlayerState]):
+        
 
-        for player_state in player_states:
-            player_state.set_final_game_score(
-                player_state.get_final_game_score() + player_state.get_round_score()
-            )
+        round_scores = [ps.get_round_score() for ps in player_states]
+        
+        if self.first_finisher_id is not None:
+            first_score = round_scores[self.first_finisher_id]
+            if first_score > 0:
+                # Double only if first finisher does NOT have lowest score
+                if first_score != min(round_scores):
+                    round_scores[self.first_finisher_id] *= 2
+                   
+
+        for i, ps in enumerate(player_states):
+            ps.set_final_game_score(ps.get_final_game_score() + round_scores[i])
 
         self.all_player_final_scores = self.get_all_final_game_scores(player_states)
         print(f"\nEnd of Round {self.round_number} Scores: {self.all_player_final_scores}\n")
@@ -190,6 +202,8 @@ class GameState:
             player_state.reset_round(new_grid)
 
         self.round_number += 1
+        self.first_finisher_id = None 
+        self.final_turn_phase = False
 
     def game_over(self):
         if any(score >= 100 for score in self.all_player_final_scores):
