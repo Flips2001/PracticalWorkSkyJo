@@ -129,7 +129,7 @@ class SkyjoGame:
                 assert (
                     self.game_state.draw_pile is not None
                 ), "Attempted to draw from empty draw pile"
-                self.game_state.hand_card = self.game_state.draw_pile.pop()
+                self.game_state.hand_card = self.game_state.draw_card()
                 self.game_state.hand_card.reveal()
                 self.game_state.phase = TurnPhase.HAVE_DRAWN_HIDDEN
                 return
@@ -273,7 +273,7 @@ class SkyjoGame:
         self.game_state.players_to_finish = set()
 
         self.start_round()
-        self.game_state.discard_pile.append(self.game_state.draw_pile.pop())
+        self.game_state.discard_pile.append(self.game_state.draw_card())
         self.game_state.discard_pile[-1].reveal()
 
         round_over = False

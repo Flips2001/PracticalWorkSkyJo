@@ -104,10 +104,54 @@ class GameState:
         for _ in range(3):
             row: List[Card] = []
             for _ in range(4):
-                row.append(self.draw_pile.pop())
+                card = self.draw_card()
+                card.face_up = False
+                row.append(card)
             grid.append(row)
         return grid
 
+    def draw_card(self) -> Card:
+        if not self.draw_pile:
+            self._rebuild_draw_pile_from_discard()
+
+        assert self.draw_pile, "No cards available to draw"
+        return self.draw_pile.pop()
+
+    def _rebuild_draw_pile_from_discard(self):
+        if len(self.discard_pile) <= 1:
+            # Not enough cards to rebuild, but maybe still playable
+            # Just return, no card to draw yet
+            return
+
+        top = self.discard_pile.pop()
+        self.draw_pile = self.discard_pile
+        random.shuffle(self.draw_pile)
+        self.discard_pile = [top]
+    
+    def reset_deck_from_all_cards(self, player_states: List[PlayerState]):
+        self.draw_pile = []
+        
+        #  Collect all cards from player grids
+        for ps in player_states:
+            for row in ps.grid:
+                for card in row:
+                    card.face_up = False
+                    self.draw_pile.append(card)
+
+        #  Collect all cards still in discard pile
+        self.draw_pile.extend(self.discard_pile)
+        self.discard_pile = []
+
+        #  Shuffle the deck
+        random.shuffle(self.draw_pile)
+
+        #  Safety check: enough cards to deal grids
+        required_cards = len(player_states) * 12
+        if len(self.draw_pile) < required_cards:
+            raise RuntimeError(
+                f"Not enough cards to deal new grids: have {len(self.draw_pile)}, need {required_cards}"
+            )
+        
     def is_round_over(self, player_states: List[PlayerState]) -> bool:
         # Check if any player has all cards face-up
         for i, player_state in enumerate(player_states):
@@ -137,16 +181,15 @@ class GameState:
             )
 
         self.all_player_final_scores = self.get_all_final_game_scores(player_states)
-        print(
-            f"\nEnd of Round {self.round_number} Scores: {self.all_player_final_scores}\n"
-        )
+        print(f"\nEnd of Round {self.round_number} Scores: {self.all_player_final_scores}\n")
+
+        self.reset_deck_from_all_cards(player_states)
 
         for player_state in player_states:
             new_grid = self.get_new_player_grid()
             player_state.reset_round(new_grid)
+
         self.round_number += 1
-        self.draw_pile = self.create_deck()
-        self.discard_pile = []
 
     def game_over(self):
         if any(score >= 100 for score in self.all_player_final_scores):
