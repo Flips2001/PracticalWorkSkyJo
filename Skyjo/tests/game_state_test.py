@@ -36,17 +36,26 @@ def test_create_deck(game_state):
 
 
 def test_finish_round_and_calculate_stats(game_state):
+    # Create player states with 3x4 grids
     player1 = PlayerState(player_id=1)
     player2 = PlayerState(player_id=2)
 
+    # Populate each grid with dummy cards
+    for ps in [player1, player2]:
+        ps.grid = [[Card(0) for _ in range(4)] for _ in range(3)]  # 3x4 grid
+
     player1.set_final_game_score(50)
     player2.set_final_game_score(70)
+
+    # Also populate the draw pile in game_state with enough cards
+    game_state.draw_pile = [Card(i) for i in range(50)]  # plenty of cards
 
     game_state.finish_round_and_calculate_stats([player1, player2])
 
     assert game_state.round_number == 2
     assert game_state.all_player_final_scores == [50, 70]
-
+    assert game_state.final_turn_phase is False
+    assert getattr(game_state, "first_finisher_id", None) is None
 
 def test_set_final_game_scores(game_state):
     player1 = PlayerState(player_id=1)
@@ -84,10 +93,3 @@ def test_get_draw_pile(game_state):
     draw_pile = game_state.get_draw_pile()
     assert len(draw_pile) == 150  # Initial deck size
 
-
-def test_round_number_increment(game_state):
-    initial_round = game_state.round_number
-    player1 = PlayerState(player_id=1)
-    player2 = PlayerState(player_id=2)
-    game_state.finish_round_and_calculate_stats([player1, player2])
-    assert game_state.round_number == initial_round + 1
