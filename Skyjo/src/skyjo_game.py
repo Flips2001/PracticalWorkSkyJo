@@ -85,6 +85,16 @@ class SkyjoGame:
         legal: List[Action] = []
 
         match self.game_state.phase:
+
+            case TurnPhase.STARTING_FLIPS:
+                hidden_positions = player.player_state.get_hidden_positions()
+                if not hidden_positions:
+                # No hidden cards left to flip; nothing to do
+                    return []
+                for pos in hidden_positions:
+                    legal.append(Action(ActionType.FLIP_CARD, pos=pos))
+                return legal
+            
             case TurnPhase.CHOOSE_DRAW:
                 if self.game_state.draw_pile:
                     legal.append(Action(ActionType.DRAW_HIDDEN_CARD))
@@ -167,7 +177,6 @@ class SkyjoGame:
                 self.game_state.hand_card = None
                 self.game_state.phase = TurnPhase.HAVE_TO_FLIP_AFTER_DISCARD
                 return
-
             # After discarding, must flip a hidden grid card
             case ActionType.FLIP_CARD:
                 assert (
@@ -176,34 +185,45 @@ class SkyjoGame:
                 r, c = action.pos
                 card = player.player_state.grid[r][c]
                 if card is not None and card.is_hidden():
-                    card.reveal()            
-                self.game_state.phase = TurnPhase.END_TURN
-                return
+                    card.reveal()          
+
+                if self.game_state.phase == TurnPhase.STARTING_FLIPS:
+                    self.game_state.round_start_flips[player.player_id] += 1
+                    
+                    return
+                
+                if self.game_state.phase == TurnPhase.HAVE_TO_FLIP_AFTER_DISCARD:
+                    self.game_state.phase = TurnPhase.END_TURN
+                    return
         return
 
     def start_round(self):
-        self.game_state.phase = TurnPhase.START_ROUND
         self.game_state.round_start_flips = {i: 0 for i in range(len(self.players))}  # reset
         self.game_state.final_turn_phase = False      
         self.game_state.first_finisher_id = None      
-        self.game_state.players_to_finish = set()     
+        self.game_state.players_to_finish = set()    
+        self.game_state.phase = TurnPhase.STARTING_FLIPS
+
         # Step 1: each player flips 2 cards
         for player in self.players:
-            hidden_positions = player.player_state.get_hidden_positions()
-            # UI should let player choose 2 positions
-            chosen = player.select_starting_flips(hidden_positions, count=2)
 
-            for pos in chosen:
-                r, c = pos
-                card = player.player_state.grid[r][c]
-                card.reveal()
+            while self.game_state.round_start_flips[player.player_id] < 2:
+                observation = self.get_observation(player)
+                legal_actions = self.get_legal_actions(player)
+                if not legal_actions:
+                    # Fallback to prevent crash
+                    print(f"Warning: No legal actions for {player.player_name} during starting flips")
+                    break
+                action = player.select_action(observation, legal_actions)
+                self.execute_action(player, action)
+
+        self.game_state.phase = TurnPhase.CHOOSE_DRAW
 
         # Step 2: determine starting player
         self.game_state.current_player_id = self._determine_starting_player()
-
-        # Step 3: transition to first real turn
-        self.game_state.phase = TurnPhase.CHOOSE_DRAW
-                
+        self.game_state.discard_pile.append(self.game_state.draw_card())
+        self.game_state.discard_pile[-1].reveal()
+                    
     def _determine_starting_player(self) -> int:
         """
         Determine which player starts this round:
@@ -275,8 +295,6 @@ class SkyjoGame:
         self.game_state.players_to_finish = set()
 
         self.start_round()
-        self.game_state.discard_pile.append(self.game_state.draw_card())
-        self.game_state.discard_pile[-1].reveal()
 
         round_over = False
         num_players = len(self.players)
