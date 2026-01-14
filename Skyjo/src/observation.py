@@ -2,6 +2,8 @@ from dataclasses import dataclass
 from Skyjo.src.card import Card
 from typing import List, Optional
 
+from Skyjo.src.turn_phase import TurnPhase
+
 
 @dataclass
 class Observation:
@@ -17,3 +19,4 @@ class Observation:
     # Public game info
     discard_top: Optional[Card]
     draw_pile_size: int
+    turn_phase: TurnPhase
