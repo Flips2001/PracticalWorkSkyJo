@@ -3,9 +3,7 @@ import random
 
 
 class RandomPlayer(Player):
-    def select_starting_flips(self, hidden_positions, count=2):
-        return random.sample(hidden_positions, count)
-    
+
     def select_action(self, observation, legal_actions):
         """
         Randomly selects an action from the list of legal actions.

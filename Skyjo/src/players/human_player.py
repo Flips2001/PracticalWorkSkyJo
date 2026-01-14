@@ -3,23 +3,6 @@ from Skyjo.src.players.player import Player
 
 
 class HumanPlayer(Player):
-    def select_starting_flips(self, hidden_positions, count=2):
-        print(f"\n{self.player_name}, select {count} cards to flip (from hidden positions):")
-        for i, pos in enumerate(hidden_positions):
-            print(f"{i}: {pos}")
-
-        chosen_indices = []
-        while len(chosen_indices) < count:
-            try:
-                choice = int(input(f"Pick card {len(chosen_indices)+1}: "))
-                if choice in chosen_indices or choice < 0 or choice >= len(hidden_positions):
-                    print("Invalid or duplicate choice.")
-                    continue
-                chosen_indices.append(choice)
-            except ValueError:
-                print("Enter a valid number.")
-
-        return [hidden_positions[i] for i in chosen_indices]
     def select_action(self, observation: Observation, legal_actions):
         """
         Prompt the human player to select an action from the list of legal actions.
