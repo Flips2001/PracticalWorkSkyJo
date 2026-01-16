@@ -1,4 +1,5 @@
 import copy
+import logging
 
 from Skyjo.src.action import Action
 from Skyjo.src.action_type import ActionType
@@ -7,14 +8,16 @@ from Skyjo.src.game_state import GameState
 from Skyjo.src.observation import Observation
 from Skyjo.src.player_state import PlayerState
 from Skyjo.src.players.player import Player
+from Skyjo.src.turn_phase import TurnPhase
 
 from typing import List, Optional
 
-from Skyjo.src.turn_phase import TurnPhase
+logger = logging.getLogger(__name__)
 
 
 class SkyjoGame:
-    def __init__(self):
+    def __init__(self, debug: bool = False):
+        self._debug = debug
         self.game_state = GameState()
         self.players: List[Player] = []
         self.num_players = 0
@@ -215,8 +218,8 @@ class SkyjoGame:
                 legal_actions = self.get_legal_actions(player)
                 if not legal_actions:
                     # Fallback to prevent crash
-                    print(
-                        f"Warning: No legal actions for {player.player_name} during starting flips"
+                    logger.warning(
+                        "No legal actions found for player %s", player.player_id
                     )
                     break
                 action = player.select_action(observation, legal_actions)
@@ -247,8 +250,11 @@ class SkyjoGame:
             # Highest individual revealed card for tie-break
             highest_card = player.player_state.get_highest_revealed_card()
 
-            print(
-                f"Player {player.player_name} has score {score}, highest card {highest_card}"
+            logger.info(
+                "Player %s has score %s, highest card %s",
+                player.player_name,
+                score,
+                highest_card,
             )
 
             # Choose starting player
@@ -262,7 +268,7 @@ class SkyjoGame:
                     best_highest_card = highest_card
                     best_index = i
 
-        print(f"{self.players[best_index].player_name} will start this round")
+        logger.info("%s will start this round", self.players[best_index].player_name)
         return best_index
 
     def turn(self, player: Player):
@@ -294,7 +300,10 @@ class SkyjoGame:
             self.play_round()
             self.game_state.game_over()
 
-        print("Game over. Final scores:", self.game_state.all_player_final_scores)
+        logger.info(
+            "Game over. Final scores: %s",
+            self.game_state.all_player_final_scores,
+        )
 
     def play_round(self):
         # Reset the final turn phase at the start of the round
