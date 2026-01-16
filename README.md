@@ -16,3 +16,6 @@
     ```bash
    pre-commit install
    ```
+
+## Play a game
+Run the `main.py` file to play a game of Skyjo. To change the number or type of players, add, change, or remove the player declarations and the `add_player()` calls.
