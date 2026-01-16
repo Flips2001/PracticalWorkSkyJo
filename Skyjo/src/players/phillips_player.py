@@ -19,7 +19,7 @@ class PhillipsPlayer(Player):
     def select_action(self, observation, legal_actions):
 
         if observation.turn_phase == TurnPhase.CHOOSE_DRAW:
-            # Choose to draw from discard pile if the top card has value 0 or less
+            # Choose to draw from discard pile if the top card has value 5 or less
             if (
                 observation.discard_top is not None
                 and observation.discard_top.value <= 5

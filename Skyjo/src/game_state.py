@@ -197,7 +197,9 @@ class GameState:
 
         self.all_player_final_scores = self.get_all_final_game_scores(player_states)
         logger.info(
-            f"\nEnd of Round {self.round_number} Scores: {self.all_player_final_scores}\n"
+            "\nEnd of Round %s Scores: %s\n",
+            self.round_number,
+            self.all_player_final_scores,
         )
 
         self.reset_deck_from_all_cards(player_states)
