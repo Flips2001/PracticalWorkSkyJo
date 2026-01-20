@@ -22,6 +22,7 @@ class SkyjoGame:
         self.num_players = 0
 
     def add_player(self, player: Player):
+        player.player_state.reset_game()
         player_grid = self.game_state.get_new_player_grid()
         player.player_state.grid = player_grid
         self.players.append(player)
