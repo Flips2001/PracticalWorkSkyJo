@@ -3,29 +3,33 @@ from Skyjo.src.players.random_player import RandomPlayer
 from Skyjo.src.skyjo_game import SkyjoGame
 from tqdm import tqdm
 
-NUM_ROUNDS = 1000
-
-BASELINE = RandomPlayer(player_id=0, player_name="Baseline")
-PLAYER = PhillipsPlayer(player_id=1, player_name="Phillips Player")
+NUM_GAMES = 1000
 
 if __name__ == "__main__":
-    baseline = 0
-    challenger = 0
+    player1 = RandomPlayer(player_id=0, player_name="Random")
+    player2 = PhillipsPlayer(player_id=1, player_name="Phillips")
 
-    for i in tqdm(range(NUM_ROUNDS)):
+    total_scores = [0, 0, 0]
+    wins = [0, 0, 0]
+
+    for i in tqdm(range(NUM_GAMES)):
         game = SkyjoGame()
-        game.add_player(BASELINE)
-        game.add_player(PLAYER)
+        game.add_player(player1)
+        game.add_player(player2)
 
         game.play_game()
 
         scores = game.game_state.all_player_final_scores
-        baseline += scores[0]
-        challenger += scores[1]
+        for j in range(3):
+            total_scores[j] += scores[j]
 
-    print(
-        f"After {NUM_ROUNDS} games, {BASELINE} total score: {baseline}, {PLAYER} total score: {challenger}"
-    )
-    print(
-        f"Average scores - {BASELINE}: {baseline / NUM_ROUNDS}, {PLAYER}: {challenger / NUM_ROUNDS}"
-    )
+        # Winner is the one with the lowest score
+        winner_id = scores.index(min(scores))
+        wins[winner_id] += 1
+
+    print(f"\nAfter {NUM_GAMES} games:")
+    players = [player1, player2]
+    for j in range(3):
+        print(
+            f"{players[j].player_name}: Total Score: {total_scores[j]}, Average: {total_scores[j] / NUM_GAMES:.2f}, Wins: {wins[j]}"
+        )

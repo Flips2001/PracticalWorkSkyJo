@@ -1,3 +1,5 @@
+import random
+
 from Skyjo.src.action_type import ActionType
 from Skyjo.src.players.player import Player
 from Skyjo.src.turn_phase import TurnPhase
@@ -78,4 +80,4 @@ class PhillipsPlayer(Player):
         # Always select the first legal action
         if not legal_actions:
             raise ValueError("No legal actions available to select from.")
-        return legal_actions[0]
+        return random.choice(legal_actions)
