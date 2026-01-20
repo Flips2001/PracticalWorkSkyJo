@@ -29,3 +29,6 @@ class Player(ABC):
         :return: Selected action
         """
         pass
+
+    def __str__(self):
+        return f"Player {self.player_id}: {self.player_name}"

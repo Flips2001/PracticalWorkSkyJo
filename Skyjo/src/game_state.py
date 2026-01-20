@@ -5,6 +5,10 @@ from Skyjo.src.card import Card
 from Skyjo.src.player_state import PlayerState
 from Skyjo.src.turn_phase import TurnPhase
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class GameState:
@@ -16,9 +20,9 @@ class GameState:
     all_player_final_scores: List[int]
     final_turn_phase: bool
     phase: TurnPhase
-    hand_card: Optional[Card]    
-    round_start_flips: dict[int, int] 
-    first_finisher_id: Optional[int]  # NEW: tracks the first player who finishes
+    hand_card: Optional[Card]
+    round_start_flips: dict[int, int]
+    first_finisher_id: Optional[int]
 
     def __init__(self):
         self.round_number = 1
@@ -30,7 +34,9 @@ class GameState:
         self.final_turn_phase = False
         self.phase = TurnPhase.CHOOSE_DRAW
         self.hand_card = None
-        self.round_start_flips: dict[int, int] = {}  # player_id -> flips done this round
+        self.round_start_flips: dict[int, int] = (
+            {}
+        )  # player_id -> flips done this round
         self.first_finisher_id = None  # Initialize first finisher as None
 
     def create_deck(self) -> List[Card]:
@@ -59,7 +65,7 @@ class GameState:
 
     def get_all_grids(self, player_states: List[PlayerState]) -> List[List[List[Card]]]:
         return [player_state.grid for player_state in player_states]
-    
+
     def is_column_uniform(self, player_state: PlayerState, col: int) -> bool:
         """
         Check if all cards in a given column are the same value and face-up.
@@ -85,18 +91,17 @@ class GameState:
         grid = player_state.get_grid()
         if not grid or not grid[0]:
             return
-        
+
         num_cols = len(grid[0])
         num_rows = len(grid)
 
         cols_to_remove = [
-            col for col in range(num_cols)
-            if self.is_column_uniform(player_state, col)
+            col for col in range(num_cols) if self.is_column_uniform(player_state, col)
         ]
         for col in reversed(cols_to_remove):
             for row in range(num_rows):
                 self.discard_pile.append(grid[row].pop(col))
-          
+
     def get_new_player_grid(self) -> List[List[Card]]:
         """
         Generates a new 3x4 grid of cards for a player by drawing from the draw pile.
@@ -129,10 +134,10 @@ class GameState:
         self.draw_pile = self.discard_pile
         random.shuffle(self.draw_pile)
         self.discard_pile = [top]
-    
+
     def reset_deck_from_all_cards(self, player_states: List[PlayerState]):
         self.draw_pile = []
-        
+
         #  Collect all cards from player grids
         for ps in player_states:
             for row in ps.grid:
@@ -153,7 +158,7 @@ class GameState:
             raise RuntimeError(
                 f"Not enough cards to deal new grids: have {len(self.draw_pile)}, need {required_cards}"
             )
-        
+
     def is_round_over(self, player_states: List[PlayerState]) -> bool:
         # Check if any player has all cards face-up
         for i, player_state in enumerate(player_states):
@@ -162,7 +167,7 @@ class GameState:
                 # Start final turn phase if not already started
                 if not self.final_turn_phase:
                     self.final_turn_phase = True
-                    self.first_finisher_id = i 
+                    self.first_finisher_id = i
                     # All other players get one last move
                     self.players_to_finish = set(
                         j for j in range(len(player_states)) if j != i
@@ -177,23 +182,25 @@ class GameState:
         return False
 
     def finish_round_and_calculate_stats(self, player_states: List[PlayerState]):
-        
 
         round_scores = [ps.get_round_score() for ps in player_states]
-        
+
         if self.first_finisher_id is not None:
             first_score = round_scores[self.first_finisher_id]
             if first_score > 0:
                 # Double only if first finisher does NOT have lowest score
                 if first_score != min(round_scores):
                     round_scores[self.first_finisher_id] *= 2
-                   
 
         for i, ps in enumerate(player_states):
             ps.set_final_game_score(ps.get_final_game_score() + round_scores[i])
 
         self.all_player_final_scores = self.get_all_final_game_scores(player_states)
-        print(f"\nEnd of Round {self.round_number} Scores: {self.all_player_final_scores}\n")
+        logger.info(
+            "\nEnd of Round %s Scores: %s\n",
+            self.round_number,
+            self.all_player_final_scores,
+        )
 
         self.reset_deck_from_all_cards(player_states)
 
@@ -202,7 +209,7 @@ class GameState:
             player_state.reset_round(new_grid)
 
         self.round_number += 1
-        self.first_finisher_id = None 
+        self.first_finisher_id = None
         self.final_turn_phase = False
 
     def game_over(self):

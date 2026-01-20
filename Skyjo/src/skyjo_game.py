@@ -1,4 +1,5 @@
 import copy
+import logging
 
 from Skyjo.src.action import Action
 from Skyjo.src.action_type import ActionType
@@ -7,10 +8,11 @@ from Skyjo.src.game_state import GameState
 from Skyjo.src.observation import Observation
 from Skyjo.src.player_state import PlayerState
 from Skyjo.src.players.player import Player
+from Skyjo.src.turn_phase import TurnPhase
 
 from typing import List, Optional
 
-from Skyjo.src.turn_phase import TurnPhase
+logger = logging.getLogger(__name__)
 
 
 class SkyjoGame:
@@ -74,6 +76,7 @@ class SkyjoGame:
                 else None
             ),
             draw_pile_size=len(self.game_state.draw_pile),
+            turn_phase=self.game_state.phase,
         )
 
     def get_legal_actions(self, player: Player) -> List[Action]:
@@ -89,19 +92,19 @@ class SkyjoGame:
             case TurnPhase.STARTING_FLIPS:
                 hidden_positions = player.player_state.get_hidden_positions()
                 if not hidden_positions:
-                # No hidden cards left to flip; nothing to do
+                    # No hidden cards left to flip; nothing to do
                     return []
                 for pos in hidden_positions:
                     legal.append(Action(ActionType.FLIP_CARD, pos=pos))
                 return legal
-            
+
             case TurnPhase.CHOOSE_DRAW:
                 if self.game_state.draw_pile:
                     legal.append(Action(ActionType.DRAW_HIDDEN_CARD))
                 if self.game_state.discard_pile:
                     legal.append(Action(ActionType.DRAW_OPEN_CARD))
                 return legal
-            
+
             case TurnPhase.HAVE_DRAWN_HIDDEN:
                 # If a card is in hand, allow swapping it with any grid position
                 for pos in player.player_state.get_all_positions():
@@ -110,11 +113,11 @@ class SkyjoGame:
                 if player.player_state.get_hidden_positions():
                     legal.append(Action(ActionType.DISCARD_CARD))
                 return legal
-            
+
             case TurnPhase.HAVE_DRAWN_OPEN:
                 # If a card is in hand, allow swapping it with any grid position
                 for pos in player.player_state.get_all_positions():
-                    legal.append(Action(ActionType.SWAP_CARD, pos=pos))               
+                    legal.append(Action(ActionType.SWAP_CARD, pos=pos))
                 return legal
 
             case TurnPhase.HAVE_TO_FLIP_AFTER_DISCARD:
@@ -185,23 +188,25 @@ class SkyjoGame:
                 r, c = action.pos
                 card = player.player_state.grid[r][c]
                 if card is not None and card.is_hidden():
-                    card.reveal()          
+                    card.reveal()
 
                 if self.game_state.phase == TurnPhase.STARTING_FLIPS:
                     self.game_state.round_start_flips[player.player_id] += 1
-                    
+
                     return
-                
+
                 if self.game_state.phase == TurnPhase.HAVE_TO_FLIP_AFTER_DISCARD:
                     self.game_state.phase = TurnPhase.END_TURN
                     return
         return
 
     def start_round(self):
-        self.game_state.round_start_flips = {i: 0 for i in range(len(self.players))}  # reset
-        self.game_state.final_turn_phase = False      
-        self.game_state.first_finisher_id = None      
-        self.game_state.players_to_finish = set()    
+        self.game_state.round_start_flips = {
+            i: 0 for i in range(len(self.players))
+        }  # reset
+        self.game_state.final_turn_phase = False
+        self.game_state.first_finisher_id = None
+        self.game_state.players_to_finish = set()
         self.game_state.phase = TurnPhase.STARTING_FLIPS
 
         # Step 1: each player flips 2 cards
@@ -212,7 +217,9 @@ class SkyjoGame:
                 legal_actions = self.get_legal_actions(player)
                 if not legal_actions:
                     # Fallback to prevent crash
-                    print(f"Warning: No legal actions for {player.player_name} during starting flips")
+                    logger.warning(
+                        "No legal actions found for player %s", player.player_id
+                    )
                     break
                 action = player.select_action(observation, legal_actions)
                 self.execute_action(player, action)
@@ -223,7 +230,7 @@ class SkyjoGame:
         self.game_state.current_player_id = self._determine_starting_player()
         self.game_state.discard_pile.append(self.game_state.draw_card())
         self.game_state.discard_pile[-1].reveal()
-                    
+
     def _determine_starting_player(self) -> int:
         """
         Determine which player starts this round:
@@ -242,7 +249,12 @@ class SkyjoGame:
             # Highest individual revealed card for tie-break
             highest_card = player.player_state.get_highest_revealed_card()
 
-            print(f"Player {player.player_name} has score {score}, highest card {highest_card}")
+            logger.info(
+                "Player %s has score %s, highest card %s",
+                player.player_name,
+                score,
+                highest_card,
+            )
 
             # Choose starting player
             if score > best_score:
@@ -255,13 +267,13 @@ class SkyjoGame:
                     best_highest_card = highest_card
                     best_index = i
 
-        print(f"{self.players[best_index].player_name} will start this round")
+        logger.info("%s will start this round", self.players[best_index].player_name)
         return best_index
 
     def turn(self, player: Player):
         """
         Plays one full turn for the given player.
-        """     
+        """
         # Keep asking for actions until the turn is ended by the executed action
         while self.game_state.phase != TurnPhase.END_TURN:
             observation = self.get_observation(player)
@@ -287,7 +299,10 @@ class SkyjoGame:
             self.play_round()
             self.game_state.game_over()
 
-        print("Game over. Final scores:", self.game_state.all_player_final_scores)
+        logger.info(
+            "Game over. Final scores: %s",
+            self.game_state.all_player_final_scores,
+        )
 
     def play_round(self):
         # Reset the final turn phase at the start of the round
@@ -301,19 +316,24 @@ class SkyjoGame:
 
         while not round_over:
             current_player = self.players[self.game_state.current_player_id]
-            
+
             # Player takes their turn
             self.turn(current_player)
 
             # Mark player done if in final turn phase
             if (
                 self.game_state.final_turn_phase
-                and self.game_state.current_player_id in self.game_state.players_to_finish
+                and self.game_state.current_player_id
+                in self.game_state.players_to_finish
             ):
-                self.game_state.players_to_finish.remove(self.game_state.current_player_id)
+                self.game_state.players_to_finish.remove(
+                    self.game_state.current_player_id
+                )
 
             # Advance to next player
-            self.game_state.current_player_id = (self.game_state.current_player_id + 1) % num_players
+            self.game_state.current_player_id = (
+                self.game_state.current_player_id + 1
+            ) % num_players
 
             # Check if the round is over
             if self.game_state.is_round_over(self.get_all_player_states()):
