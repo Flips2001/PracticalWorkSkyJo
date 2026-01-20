@@ -13,7 +13,7 @@ if __name__ == "__main__":
     challenger = 0
 
     for i in tqdm(range(NUM_ROUNDS)):
-        game = SkyjoGame(debug=True)
+        game = SkyjoGame()
         game.add_player(BASELINE)
         game.add_player(PLAYER)
 

@@ -16,8 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 class SkyjoGame:
-    def __init__(self, debug: bool = False):
-        self._debug = debug
+    def __init__(self):
         self.game_state = GameState()
         self.players: List[Player] = []
         self.num_players = 0
