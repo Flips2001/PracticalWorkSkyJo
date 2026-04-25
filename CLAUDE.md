@@ -67,7 +67,7 @@ evaluate.py                  # Evaluation script
 - **Observation**: 70-dim vector encoding own grid (24), opponent grid (24), discard/hand cards (4), turn phase one-hot (5), scores (2), draw pile size (1), column match counts (8), final turn flag (1), first finisher flag (1)
 - **Action space**: 27 discrete actions — 0: draw hidden, 1: draw open, 2: discard, 3-14: flip at grid pos, 15-26: swap at grid pos
 - **Training**: `MaskablePPO` (sb3_contrib) with action masking, self-play (90% model, 10% random), linear LR/clip schedule, 8 parallel envs, periodic evaluation vs PhillipsPlayer
-- **Reward**: Mixed shaping — terminal rewards (+1 win, -1 loss) plus shaped round rewards applied by `SkyjoEnv._check_round_reward()`
+- **Reward**: Terminal +1 win / -1 loss, plus intermediate round-end shaping (score delta / 50) for faster learning signal in long games
 
 ## Code Conventions
 

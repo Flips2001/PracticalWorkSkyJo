@@ -108,18 +108,20 @@ class SkyjoSelfPlayWrapper(Env):
 
         if all(self.env.terminations.values()):
             reward = self.env._cumulative_rewards.get("player_0", 0.0)
+            self.env._cumulative_rewards["player_0"] = 0.0
             return np.zeros(OBS_SIZE, dtype=np.float32), reward, True, False, {}
 
         _play_opponent_turns(self.env)
 
         if all(self.env.terminations.values()):
             reward = self.env._cumulative_rewards.get("player_0", 0.0)
+            self.env._cumulative_rewards["player_0"] = 0.0
             return np.zeros(OBS_SIZE, dtype=np.float32), reward, True, False, {}
 
         obs = self.env.observe(self.env.agent_selection)
         self._current_mask = obs["action_mask"]
-        reward = self.env.rewards.get("player_0", 0.0)
-        self.env.rewards["player_0"] = 0.0
+        reward = self.env._cumulative_rewards.get("player_0", 0.0)
+        self.env._cumulative_rewards["player_0"] = 0.0
         return obs["observation"], reward, False, False, {}
 
     def action_masks(self) -> np.ndarray:

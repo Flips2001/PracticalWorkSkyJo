@@ -1,7 +1,6 @@
 """PettingZoo AEC Environment for Skyjo (2-player self-play via greenlet coroutines)."""
 
 import functools
-import random
 import numpy as np
 from gymnasium import spaces
 from pettingzoo import AECEnv
@@ -89,10 +88,6 @@ class SkyjoEnv(AECEnv):
         self.game.play_game()
 
     def reset(self, seed=None, options=None):
-        if seed is not None:
-            random.seed(seed)
-            np.random.seed(seed)
-
         self.agents = self.possible_agents[:]
         self.rewards = {agent: 0.0 for agent in self.agents}
         self._cumulative_rewards = {agent: 0.0 for agent in self.agents}
@@ -179,6 +174,7 @@ class SkyjoEnv(AECEnv):
 
         if result is None or self._game_greenlet.dead:
             self._handle_game_over()
+            self._accumulate_rewards()
         else:
             player_id, obs, legal_actions = result
             self._current_obs = obs
