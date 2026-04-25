@@ -44,7 +44,7 @@ def _load_opponent_if_needed():
         if os.path.exists(_BEST_MODEL_PATH + ".zip"):
             _opponent_model = MaskablePPO.load(_BEST_MODEL_PATH, device=DEVICE)
     except Exception:
-        pass
+        print("Error loading opponent model from disk")
 
 
 def _get_opponent_action(env):
@@ -224,7 +224,7 @@ class TqdmCallback(BaseCallback):
 
 
 def train():
-    env = SubprocVecEnv([make_env() for _ in range(NUM_PROCS)], start_method="fork")
+    env = SubprocVecEnv([make_env() for _ in range(NUM_PROCS)])
 
     policy_kwargs = dict(
         net_arch=dict(pi=[256, 256, 128], vf=[256, 256, 128]),

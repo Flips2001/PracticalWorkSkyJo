@@ -1,6 +1,14 @@
 """
 Encodes an Observation into a flat 70-dim numpy vector for the RL agent.
-Card values normalized: (value + 2) / 14 → [0, 1]. Hidden cards: value=0, revealed=0.
+
+Card values are normalized via (value + 2) / 14 → [0, 1].
+Each grid slot is encoded as a (value, is_revealed) pair:
+  - Face-up card:   (normalized_value, 1.0)
+  - Face-down card: (0.0, 0.0) — value left at default zero (sentinel, not
+    the normalization formula applied to any real card value). Note that
+    normalized(-2) also equals 0.0, but the is_revealed flag (0 vs 1)
+    disambiguates face-down slots from revealed -2 cards.
+  - Removed column: (normalized(0), 1.0) — see _encode_grid() for details.
 """
 
 import numpy as np
@@ -49,7 +57,15 @@ def _column_match_counts(grid: Optional[List[List[Card]]]) -> List[float]:
 
 def _encode_grid(grid: Optional[List[List[Card]]], obs_vec: np.ndarray, offset: int):
     """Encode a 3×4 grid into obs_vec starting at offset.
-    Per slot: (normalized_value, is_revealed)."""
+    Per slot: (normalized_value, is_revealed).
+
+    Three possible states per slot:
+      - Face-down card:    (0.0, 0.0)  — value unknown, not revealed
+      - Face-up card:      (normalized_value, 1.0) — real card value, revealed
+      - Removed column:    (normalized(0), 1.0) — slot no longer in play;
+            encoded as revealed with value 0 (neutral) so the agent sees it
+            as a resolved/safe slot rather than an unknown one.
+    """
     for r in range(GRID_ROWS):
         for c in range(GRID_COLS):
             idx = offset + (r * GRID_COLS + c) * 2
@@ -59,7 +75,7 @@ def _encode_grid(grid: Optional[List[List[Card]]], obs_vec: np.ndarray, offset: 
                     obs_vec[idx] = _normalize_card_value(card.value)
                     obs_vec[idx + 1] = 1.0
             else:
-                # Removed column → treat as revealed 0
+                # Removed column → encoded as revealed with neutral value 0
                 obs_vec[idx] = _normalize_card_value(0)
                 obs_vec[idx + 1] = 1.0
 
@@ -77,6 +93,8 @@ def encode_observation(obs: Observation) -> np.ndarray:
     Layout (70 dims):
       0-23:  Own grid (12 slots × 2: value, revealed)
       24-47: Opponent grid (12 slots × 2)
+             Grid slot states: face-down → (0, 0); face-up → (norm_val, 1);
+             removed column → (norm(0), 1) — treated as revealed neutral value.
       48-49: Discard top (value, has_card)
       50-51: Hand card (value, has_card)
       52-56: Turn phase one-hot (5 phases)

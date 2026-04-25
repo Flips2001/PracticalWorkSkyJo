@@ -1,3 +1,5 @@
+import os
+
 from Skyjo.src.players.phillips_player import PhillipsPlayer
 from Skyjo.src.players.rl_player import RLPlayer
 from Skyjo.src.skyjo_game import SkyjoGame
@@ -6,10 +8,18 @@ from tqdm import tqdm
 NUM_GAMES = 1000
 
 if __name__ == "__main__":
+    model_path = os.path.join(
+        os.path.dirname(__file__),
+        os.pardir,
+        "src",
+        "rl",
+        "checkpoints",
+        "skyjo_ppo_best.zip",
+    )
     player1 = RLPlayer(
         player_id=0,
         player_name="RL Player",
-        model_path="/Users/philliplechenauer/Developer/PracticalWorkSkyJo/Skyjo/src/rl/checkpoints/skyjo_ppo_best.zip",
+        model_path=model_path,
     )
     player2 = PhillipsPlayer(player_id=1, player_name="Phillips")
     players = [player1, player2]

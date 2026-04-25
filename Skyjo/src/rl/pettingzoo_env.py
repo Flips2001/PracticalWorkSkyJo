@@ -1,6 +1,7 @@
 """PettingZoo AEC Environment for Skyjo (2-player self-play via greenlet coroutines)."""
 
 import functools
+import random
 import numpy as np
 from gymnasium import spaces
 from pettingzoo import AECEnv
@@ -88,6 +89,10 @@ class SkyjoEnv(AECEnv):
         self.game.play_game()
 
     def reset(self, seed=None, options=None):
+        if seed is not None:
+            random.seed(seed)
+            np.random.seed(seed)
+
         self.agents = self.possible_agents[:]
         self.rewards = {agent: 0.0 for agent in self.agents}
         self._cumulative_rewards = {agent: 0.0 for agent in self.agents}
@@ -134,7 +139,6 @@ class SkyjoEnv(AECEnv):
             self.rewards[self._agent_name(winner_id)] += 1.0
             self.rewards[self._agent_name(loser_id)] -= 1.0
         self.terminations = {agent: True for agent in self.agents}
-        self._accumulate_rewards()
 
     def _check_round_reward(self):
         """Give shaped reward when a round completes based on round score difference."""
@@ -162,7 +166,11 @@ class SkyjoEnv(AECEnv):
     def step(self, action_int: int):
         agent = self.agent_selection
         if self.terminations[agent] or self.truncations[agent]:
+            self._was_dead_step(action_int)
             return
+
+        # Accumulate rewards from the previous step, then clear for this step
+        self._accumulate_rewards()
 
         action = int_to_action(action_int)
 
@@ -177,6 +185,7 @@ class SkyjoEnv(AECEnv):
             self._current_legal_actions = legal_actions
             self.agent_selection = self._agent_name(player_id)
             self._check_round_reward()
+            self._accumulate_rewards()
 
     def _accumulate_rewards(self):
         for agent in self.agents:

@@ -1,4 +1,4 @@
-But # CLAUDE.md
+# CLAUDE.md
 
 ## Project Overview
 
@@ -46,7 +46,7 @@ Skyjo/
       phillips_player.py     # Heuristic strategy (draw discard if ≤5, swap high cards, etc.)
       rl_player.py           # Trained MaskablePPO model player
     rl/
-      encoding.py            # Observation → 80-dim float32 vector
+      encoding.py            # Observation → 70-dim float32 vector
       action_mapping.py      # Action ↔ int (27 discrete actions)
       pettingzoo_env.py      # PettingZoo AEC env using greenlet coroutines
       train.py               # Self-play training script (MaskablePPO, 8 SubprocVecEnv)
