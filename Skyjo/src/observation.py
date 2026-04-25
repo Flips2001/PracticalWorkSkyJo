@@ -20,3 +20,6 @@ class Observation:
     discard_top: Optional[Card]
     draw_pile_size: int
     turn_phase: TurnPhase
+    # Final turn info
+    final_turn_phase: bool = False
+    first_finisher_id: Optional[int] = None
