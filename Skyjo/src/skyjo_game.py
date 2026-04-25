@@ -78,6 +78,8 @@ class SkyjoGame:
             ),
             draw_pile_size=len(self.game_state.draw_pile),
             turn_phase=self.game_state.phase,
+            final_turn_phase=self.game_state.final_turn_phase,
+            first_finisher_id=self.game_state.first_finisher_id,
         )
 
     def get_legal_actions(self, player: Player) -> List[Action]:

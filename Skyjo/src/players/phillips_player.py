@@ -40,18 +40,22 @@ class PhillipsPlayer(Player):
             observation.turn_phase == TurnPhase.HAVE_DRAWN_HIDDEN
             or observation.turn_phase == TurnPhase.HAVE_DRAWN_OPEN
         ):
-            highest_card_value, pos = max(
-                (
-                    (card.value, (i, j))
-                    for i, row in enumerate(observation.card_grid)
-                    for j, card in enumerate(row)
-                ),
-                key=lambda x: x[0],
+            revealed_cards = [
+                (card.value, (i, j))
+                for i, row in enumerate(observation.card_grid)
+                for j, card in enumerate(row)
+                if not card.is_hidden()
+            ]
+            highest_card_value, pos = (
+                max(revealed_cards, key=lambda x: x[0])
+                if revealed_cards
+                else (float("-inf"), None)
             )
 
             # Prefer to play the hand card if it improves the grid
             if (
                 observation.hand_card is not None
+                and pos is not None
                 and observation.hand_card.value < highest_card_value
             ):
                 for action in legal_actions:
