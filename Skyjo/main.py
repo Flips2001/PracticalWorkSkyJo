@@ -49,20 +49,19 @@ def run_game(stdscr):
     game.add_player(player2)
 
     try:
-        while not game.game_state.is_game_over:
-            game.play_round()
-            game.game_state.game_over()
 
-            scores = game.game_state.all_player_final_scores
-            names = [p.player_name for p in game.players]
-            round_num = game.game_state.round_number - 1
+        def on_round_end(g):
+            scores = g.game_state.all_player_final_scores
+            names = [p.player_name for p in g.players]
+            round_num = g.game_state.round_number - 1
+            player2.show_round_summary(scores, names, round_num)
 
-            if not game.game_state.is_game_over:
-                player2.show_round_summary(scores, names, round_num)
+        def on_game_over(g):
+            final_scores = g.game_state.all_player_final_scores
+            names = [p.player_name for p in g.players]
+            player2.show_game_over(final_scores, names)
 
-        final_scores = game.game_state.all_player_final_scores
-        names = [p.player_name for p in game.players]
-        player2.show_game_over(final_scores, names)
+        game.play_game(on_round_end=on_round_end, on_game_over=on_game_over)
 
     except KeyboardInterrupt:
         pass
@@ -87,7 +86,7 @@ def run_legacy():
     game.play_game()
 
 
-if __name__ == "__main__":
+def main():
     if "--legacy" in sys.argv:
         run_legacy()
     else:
@@ -98,3 +97,7 @@ if __name__ == "__main__":
             # Fallback to legacy mode if no terminal is available (e.g. running from IDE)
             print("No terminal available for curses UI, falling back to legacy mode.")
             run_legacy()
+
+
+if __name__ == "__main__":
+    main()

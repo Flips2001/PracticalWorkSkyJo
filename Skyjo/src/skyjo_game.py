@@ -10,7 +10,7 @@ from Skyjo.src.player_state import PlayerState
 from Skyjo.src.players.player import Player
 from Skyjo.src.turn_phase import TurnPhase
 
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -297,10 +297,28 @@ class SkyjoGame:
         # Finish scoring and prepare for next round
         self.game_state.finish_round_and_calculate_stats(self.get_all_player_states())
 
-    def play_game(self):
+    def play_game(
+        self,
+        on_round_end: Optional[Callable[["SkyjoGame"], None]] = None,
+        on_game_over: Optional[Callable[["SkyjoGame"], None]] = None,
+    ):
+        """Play the full game.
+
+        Args:
+            on_round_end: Optional callback called after each round (not called
+                when the game is over). Signature: ``(game: SkyjoGame) -> None``.
+            on_game_over: Optional callback called once the game ends.
+                Signature: ``(game: SkyjoGame) -> None``.
+        """
         while not self.game_state.is_game_over:
             self.play_round()
             self.game_state.game_over()
+
+            if not self.game_state.is_game_over and on_round_end is not None:
+                on_round_end(self)
+
+        if on_game_over is not None:
+            on_game_over(self)
 
         logger.info(
             "Game over. Final scores: %s",
