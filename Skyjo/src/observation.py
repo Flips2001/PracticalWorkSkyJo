@@ -14,12 +14,14 @@ class Observation:
     hand_card: Optional[Card]
     # Public info about other players (you can refine later)
     opponent_cards: List[Optional[List[List[Card]]]]
-    # scores of all players
+    # scores of all players (current round)
     scores: List[int]
     # Public game info
     discard_top: Optional[Card]
     draw_pile_size: int
     turn_phase: TurnPhase
+    # Total accumulated game scores across all rounds
+    total_scores: List[int] = None
     # Final turn info
     final_turn_phase: bool = False
     first_finisher_id: Optional[int] = None

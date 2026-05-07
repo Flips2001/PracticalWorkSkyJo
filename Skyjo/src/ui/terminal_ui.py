@@ -136,7 +136,30 @@ class TerminalRenderer:
 
         # Game info bar (discard + hand + draw pile)
         self._render_game_info(row, observation)
-        row += 3
+        row += 2
+
+        # Total game scores
+        if observation.total_scores:
+            total_text = "Total Points:  "
+            self._safe_addstr(row, 2, total_text, curses.color_pair(COLOR_TITLE))
+            col_offset = 2 + len(total_text)
+            self._safe_addstr(
+                row,
+                col_offset,
+                f"You: {observation.total_scores[observation.player_id]}",
+                curses.color_pair(COLOR_SCORE) | curses.A_BOLD,
+            )
+            col_offset += 12
+            for i, score in enumerate(observation.total_scores):
+                if i != observation.player_id:
+                    self._safe_addstr(
+                        row,
+                        col_offset,
+                        f"{opponent_name}: {score}",
+                        curses.color_pair(COLOR_SCORE),
+                    )
+            row += 1
+        row += 1
 
         # Two grids side by side
         grid_start_row = row

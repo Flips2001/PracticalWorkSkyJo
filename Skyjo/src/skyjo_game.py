@@ -78,6 +78,7 @@ class SkyjoGame:
             ),
             draw_pile_size=len(self.game_state.draw_pile),
             turn_phase=self.game_state.phase,
+            total_scores=list(self.game_state.all_player_final_scores),
             final_turn_phase=self.game_state.final_turn_phase,
             first_finisher_id=self.game_state.first_finisher_id,
         )
