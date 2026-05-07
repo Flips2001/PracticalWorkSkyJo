@@ -1,6 +1,7 @@
 import os
 import sys
 import curses
+import _curses
 import logging
 
 from Skyjo.src.players.rl_player import RLPlayer
@@ -9,11 +10,15 @@ from Skyjo.src.skyjo_game import SkyjoGame
 
 logger = logging.getLogger(__name__)
 
+# Ensure the project root is on sys.path so 'Skyjo' package can be imported
+_project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
 
 def get_model_path():
     return os.path.join(
         os.path.dirname(__file__),
-        os.pardir,
         "src",
         "rl",
         "checkpoints",
@@ -87,4 +92,9 @@ if __name__ == "__main__":
         run_legacy()
     else:
         logging.basicConfig(level=logging.CRITICAL)
-        curses.wrapper(run_game)
+        try:
+            curses.wrapper(run_game)
+        except _curses.error:
+            # Fallback to legacy mode if no terminal is available (e.g. running from IDE)
+            print("No terminal available for curses UI, falling back to legacy mode.")
+            run_legacy()

@@ -4,7 +4,7 @@ Provides a full-screen, color-coded game display with in-place updates.
 """
 
 import curses
-from typing import List, Optional
+from typing import List
 
 from Skyjo.src.card import Card
 from Skyjo.src.observation import Observation
@@ -103,20 +103,34 @@ class TerminalRenderer:
         row = 0
         # Title bar
         title = "═══════════════════════  S K Y J O  ═══════════════════════"
-        self._safe_addstr(row, max(0, (max_x - len(title)) // 2), title,
-                          curses.color_pair(COLOR_TITLE) | curses.A_BOLD)
+        self._safe_addstr(
+            row,
+            max(0, (max_x - len(title)) // 2),
+            title,
+            curses.color_pair(COLOR_TITLE) | curses.A_BOLD,
+        )
         row += 2
 
         # Phase info
-        phase_text = PHASE_DESCRIPTIONS.get(observation.turn_phase, str(observation.turn_phase))
-        self._safe_addstr(row, 2, f"Phase: {phase_text}",
-                          curses.color_pair(COLOR_PHASE) | curses.A_BOLD)
+        phase_text = PHASE_DESCRIPTIONS.get(
+            observation.turn_phase, str(observation.turn_phase)
+        )
+        self._safe_addstr(
+            row,
+            2,
+            f"Phase: {phase_text}",
+            curses.color_pair(COLOR_PHASE) | curses.A_BOLD,
+        )
         row += 1
 
         # Final turn warning
         if observation.final_turn_phase:
-            self._safe_addstr(row, 2, "⚠️  FINAL TURN! ⚠️",
-                              curses.color_pair(COLOR_HIGH) | curses.A_BOLD | curses.A_BLINK)
+            self._safe_addstr(
+                row,
+                2,
+                "⚠️  FINAL TURN! ⚠️",
+                curses.color_pair(COLOR_HIGH) | curses.A_BOLD | curses.A_BLINK,
+            )
             row += 1
         row += 1
 
@@ -126,17 +140,31 @@ class TerminalRenderer:
 
         # Two grids side by side
         grid_start_row = row
-        self._render_player_grid(grid_start_row, 2, player_name, observation.card_grid,
-                                 observation.scores[observation.player_id], is_self=True)
+        self._render_player_grid(
+            grid_start_row,
+            2,
+            player_name,
+            observation.card_grid,
+            observation.scores[observation.player_id],
+            is_self=True,
+        )
 
         # Opponent grid on the right side
         opponent_col = 40
         if observation.opponent_cards:
             for i, opp_grid in enumerate(observation.opponent_cards):
                 if opp_grid is not None:
-                    opp_score = observation.scores[i] if i < len(observation.scores) else 0
-                    self._render_player_grid(grid_start_row, opponent_col, opponent_name,
-                                             opp_grid, opp_score, is_self=False)
+                    opp_score = (
+                        observation.scores[i] if i < len(observation.scores) else 0
+                    )
+                    self._render_player_grid(
+                        grid_start_row,
+                        opponent_col,
+                        opponent_name,
+                        opp_grid,
+                        opp_score,
+                        is_self=False,
+                    )
                     break
 
         row = grid_start_row + 10
@@ -146,14 +174,22 @@ class TerminalRenderer:
 
         # Status message
         if message:
-            msg_row = max_y - 2 if max_y - 2 > row + len(legal_actions) + 2 else row + len(legal_actions) + 3
+            msg_row = (
+                max_y - 2
+                if max_y - 2 > row + len(legal_actions) + 2
+                else row + len(legal_actions) + 3
+            )
             self._safe_addstr(msg_row, 2, message, curses.color_pair(COLOR_TITLE))
 
         # Help bar at bottom
-        help_text = " ↑↓ Navigate  │  Enter Select  │  1-9 Quick Select  │  q Quit "
+        help_text = " ↑↓ Navigate  │  Enter Select  │  q Quit "
         help_row = max_y - 1
-        self._safe_addstr(help_row, max(0, (max_x - len(help_text)) // 2), help_text,
-                          curses.color_pair(COLOR_TITLE) | curses.A_DIM)
+        self._safe_addstr(
+            help_row,
+            max(0, (max_x - len(help_text)) // 2),
+            help_text,
+            curses.color_pair(COLOR_TITLE) | curses.A_DIM,
+        )
 
         self.stdscr.refresh()
 
@@ -172,8 +208,12 @@ class TerminalRenderer:
         if observation.discard_top:
             card_str = format_card(observation.discard_top)
             color = get_card_color(observation.discard_top)
-            self._safe_addstr(row, col + 9, f"[{card_str.strip()}]",
-                              curses.color_pair(color) | curses.A_BOLD)
+            self._safe_addstr(
+                row,
+                col + 9,
+                f"[{card_str.strip()}]",
+                curses.color_pair(color) | curses.A_BOLD,
+            )
         else:
             self._safe_addstr(row, col + 9, "[empty]", curses.color_pair(COLOR_DEFAULT))
 
@@ -183,76 +223,118 @@ class TerminalRenderer:
         if observation.hand_card:
             card_str = format_card(observation.hand_card)
             color = get_card_color(observation.hand_card)
-            self._safe_addstr(row, col + 6, f"[{card_str.strip()}]",
-                              curses.color_pair(color) | curses.A_BOLD)
+            self._safe_addstr(
+                row,
+                col + 6,
+                f"[{card_str.strip()}]",
+                curses.color_pair(color) | curses.A_BOLD,
+            )
         else:
-            self._safe_addstr(row, col + 6, "[-]", curses.color_pair(COLOR_DEFAULT) | curses.A_DIM)
+            self._safe_addstr(
+                row, col + 6, "[-]", curses.color_pair(COLOR_DEFAULT) | curses.A_DIM
+            )
 
     def _render_player_grid(
-        self, start_row: int, start_col: int, name: str,
-        grid: List[List[Card]], score: int, is_self: bool
+        self,
+        start_row: int,
+        start_col: int,
+        name: str,
+        grid: List[List[Card]],
+        score: int,
+        is_self: bool,
     ):
         """Render a player's card grid."""
         row = start_row
 
         # Player name and score
         header = f"{'▶ ' if is_self else '  '}{name}"
-        attr = curses.color_pair(COLOR_TITLE) | curses.A_BOLD if is_self else curses.color_pair(COLOR_TITLE)
+        attr = (
+            curses.color_pair(COLOR_TITLE) | curses.A_BOLD
+            if is_self
+            else curses.color_pair(COLOR_TITLE)
+        )
         self._safe_addstr(row, start_col, header, attr)
         score_text = f"Score: {score}"
-        self._safe_addstr(row, start_col + len(header) + 2, score_text,
-                          curses.color_pair(COLOR_SCORE))
+        self._safe_addstr(
+            row, start_col + len(header) + 2, score_text, curses.color_pair(COLOR_SCORE)
+        )
         row += 1
 
-        # Column numbers
+        # Column numbers (0-indexed, aligned over card cells)
         col_header = "    "
         for c in range(len(grid[0]) if grid else 0):
-            col_header += f" C{c+1} "
-        self._safe_addstr(row, start_col, col_header,
-                          curses.color_pair(COLOR_DEFAULT) | curses.A_DIM)
+            col_header += f" C{c}  "
+        self._safe_addstr(
+            row, start_col, col_header, curses.color_pair(COLOR_DEFAULT) | curses.A_DIM
+        )
         row += 1
 
         # Grid border top
         num_cols = len(grid[0]) if grid else 0
         border = "   ┌" + "────┬" * (num_cols - 1) + "────┐" if num_cols > 0 else ""
-        self._safe_addstr(row, start_col, border, curses.color_pair(COLOR_DEFAULT) | curses.A_DIM)
+        self._safe_addstr(
+            row, start_col, border, curses.color_pair(COLOR_DEFAULT) | curses.A_DIM
+        )
         row += 1
 
         # Card rows
         for r_idx, card_row in enumerate(grid):
-            row_label = f"R{r_idx+1} │"
-            self._safe_addstr(row, start_col, row_label,
-                              curses.color_pair(COLOR_DEFAULT) | curses.A_DIM)
+            row_label = f"R{r_idx} │"
+            self._safe_addstr(
+                row,
+                start_col,
+                row_label,
+                curses.color_pair(COLOR_DEFAULT) | curses.A_DIM,
+            )
             col = start_col + len(row_label)
             for c_idx, card in enumerate(card_row):
                 card_str = format_card(card)
                 color = get_card_color(card)
-                self._safe_addstr(row, col, card_str, curses.color_pair(color) | curses.A_BOLD)
+                self._safe_addstr(
+                    row, col, card_str, curses.color_pair(color) | curses.A_BOLD
+                )
                 if c_idx < len(card_row) - 1:
-                    self._safe_addstr(row, col + len(card_str), "│",
-                                      curses.color_pair(COLOR_DEFAULT) | curses.A_DIM)
+                    self._safe_addstr(
+                        row,
+                        col + len(card_str),
+                        "│",
+                        curses.color_pair(COLOR_DEFAULT) | curses.A_DIM,
+                    )
                     col += len(card_str) + 1
                 else:
-                    self._safe_addstr(row, col + len(card_str), "│",
-                                      curses.color_pair(COLOR_DEFAULT) | curses.A_DIM)
+                    self._safe_addstr(
+                        row,
+                        col + len(card_str),
+                        "│",
+                        curses.color_pair(COLOR_DEFAULT) | curses.A_DIM,
+                    )
                     col += len(card_str) + 1
             row += 1
 
             # Row separator
             if r_idx < len(grid) - 1:
-                sep = "   ├" + "────┼" * (num_cols - 1) + "────┤" if num_cols > 0 else ""
-                self._safe_addstr(row, start_col, sep,
-                                  curses.color_pair(COLOR_DEFAULT) | curses.A_DIM)
+                sep = (
+                    "   ├" + "────┼" * (num_cols - 1) + "────┤" if num_cols > 0 else ""
+                )
+                self._safe_addstr(
+                    row, start_col, sep, curses.color_pair(COLOR_DEFAULT) | curses.A_DIM
+                )
                 row += 1
 
         # Grid border bottom
         border = "   └" + "────┴" * (num_cols - 1) + "────┘" if num_cols > 0 else ""
-        self._safe_addstr(row, start_col, border, curses.color_pair(COLOR_DEFAULT) | curses.A_DIM)
+        self._safe_addstr(
+            row, start_col, border, curses.color_pair(COLOR_DEFAULT) | curses.A_DIM
+        )
 
     def _render_actions(self, row: int, legal_actions: List, selected_index: int):
         """Render the action selection menu."""
-        self._safe_addstr(row, 2, "Available Actions:",
-                          curses.color_pair(COLOR_TITLE) | curses.A_BOLD | curses.A_UNDERLINE)
+        self._safe_addstr(
+            row,
+            2,
+            "Available Actions:",
+            curses.color_pair(COLOR_TITLE) | curses.A_BOLD | curses.A_UNDERLINE,
+        )
         row += 1
 
         for i, action in enumerate(legal_actions):
@@ -266,26 +348,40 @@ class TerminalRenderer:
 
             self._safe_addstr(row + i, 2, action_text, attr)
 
-    def render_round_summary(self, scores: List[int], player_names: List[str], round_num: int):
+    def render_round_summary(
+        self, scores: List[int], player_names: List[str], round_num: int
+    ):
         """Render end-of-round summary."""
         self.stdscr.erase()
         max_y, max_x = self.stdscr.getmaxyx()
 
         row = max_y // 4
         title = f"══════  Round {round_num} Complete  ══════"
-        self._safe_addstr(row, max(0, (max_x - len(title)) // 2), title,
-                          curses.color_pair(COLOR_TITLE) | curses.A_BOLD)
+        self._safe_addstr(
+            row,
+            max(0, (max_x - len(title)) // 2),
+            title,
+            curses.color_pair(COLOR_TITLE) | curses.A_BOLD,
+        )
         row += 3
 
         for i, (name, score) in enumerate(zip(player_names, scores)):
             text = f"  {name}: {score} points"
-            self._safe_addstr(row + i, max(0, (max_x - len(text)) // 2), text,
-                              curses.color_pair(COLOR_SCORE) | curses.A_BOLD)
+            self._safe_addstr(
+                row + i,
+                max(0, (max_x - len(text)) // 2),
+                text,
+                curses.color_pair(COLOR_SCORE) | curses.A_BOLD,
+            )
 
         row += len(scores) + 3
         continue_text = "Press any key to continue..."
-        self._safe_addstr(row, max(0, (max_x - len(continue_text)) // 2), continue_text,
-                          curses.color_pair(COLOR_DEFAULT) | curses.A_DIM)
+        self._safe_addstr(
+            row,
+            max(0, (max_x - len(continue_text)) // 2),
+            continue_text,
+            curses.color_pair(COLOR_DEFAULT) | curses.A_DIM,
+        )
 
         self.stdscr.refresh()
         self.stdscr.getch()
@@ -299,12 +395,24 @@ class TerminalRenderer:
         title = "╔══════════════════════════════╗"
         title2 = "║       G A M E   O V E R      ║"
         title3 = "╚══════════════════════════════╝"
-        self._safe_addstr(row, max(0, (max_x - len(title)) // 2), title,
-                          curses.color_pair(COLOR_TITLE) | curses.A_BOLD)
-        self._safe_addstr(row + 1, max(0, (max_x - len(title2)) // 2), title2,
-                          curses.color_pair(COLOR_TITLE) | curses.A_BOLD)
-        self._safe_addstr(row + 2, max(0, (max_x - len(title3)) // 2), title3,
-                          curses.color_pair(COLOR_TITLE) | curses.A_BOLD)
+        self._safe_addstr(
+            row,
+            max(0, (max_x - len(title)) // 2),
+            title,
+            curses.color_pair(COLOR_TITLE) | curses.A_BOLD,
+        )
+        self._safe_addstr(
+            row + 1,
+            max(0, (max_x - len(title2)) // 2),
+            title2,
+            curses.color_pair(COLOR_TITLE) | curses.A_BOLD,
+        )
+        self._safe_addstr(
+            row + 2,
+            max(0, (max_x - len(title3)) // 2),
+            title3,
+            curses.color_pair(COLOR_TITLE) | curses.A_BOLD,
+        )
         row += 5
 
         # Determine winner (lowest score)
@@ -314,18 +422,30 @@ class TerminalRenderer:
             marker = " 🏆" if i == winner_idx else ""
             text = f"  {name}: {score} points{marker}"
             color = COLOR_NEGATIVE if i == winner_idx else COLOR_HIGH
-            self._safe_addstr(row + i, max(0, (max_x - len(text)) // 2), text,
-                              curses.color_pair(color) | curses.A_BOLD)
+            self._safe_addstr(
+                row + i,
+                max(0, (max_x - len(text)) // 2),
+                text,
+                curses.color_pair(color) | curses.A_BOLD,
+            )
 
         row += len(scores) + 3
         winner_text = f"🎉 {player_names[winner_idx]} wins! 🎉"
-        self._safe_addstr(row, max(0, (max_x - len(winner_text)) // 2), winner_text,
-                          curses.color_pair(COLOR_NEGATIVE) | curses.A_BOLD)
+        self._safe_addstr(
+            row,
+            max(0, (max_x - len(winner_text)) // 2),
+            winner_text,
+            curses.color_pair(COLOR_NEGATIVE) | curses.A_BOLD,
+        )
 
         row += 3
         exit_text = "Press any key to exit..."
-        self._safe_addstr(row, max(0, (max_x - len(exit_text)) // 2), exit_text,
-                          curses.color_pair(COLOR_DEFAULT) | curses.A_DIM)
+        self._safe_addstr(
+            row,
+            max(0, (max_x - len(exit_text)) // 2),
+            exit_text,
+            curses.color_pair(COLOR_DEFAULT) | curses.A_DIM,
+        )
 
         self.stdscr.refresh()
         self.stdscr.getch()

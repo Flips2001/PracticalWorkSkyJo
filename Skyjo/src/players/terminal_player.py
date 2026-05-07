@@ -15,7 +15,9 @@ from Skyjo.src.ui.terminal_ui import TerminalRenderer
 class TerminalPlayer(Player):
     """Interactive player using curses-based terminal UI."""
 
-    def __init__(self, player_id: int, player_name: str, stdscr, opponent_name: str = "Opponent"):
+    def __init__(
+        self, player_id: int, player_name: str, stdscr, opponent_name: str = "Opponent"
+    ):
         super().__init__(player_id, player_name)
         self.stdscr = stdscr
         self.renderer = TerminalRenderer(stdscr)
@@ -65,20 +67,14 @@ class TerminalPlayer(Player):
                 # Enter key - confirm selection
                 self._message = ""
                 return legal_actions[selected_index]
-            elif key == ord('q') or key == ord('Q'):
+            elif key == ord("q") or key == ord("Q"):
                 raise KeyboardInterrupt("Player quit the game")
-            elif ord('1') <= key <= ord('9'):
-                # Number key quick select
-                num = key - ord('0')
-                if 1 <= num <= num_actions:
-                    self._message = ""
-                    return legal_actions[num - 1]
-                else:
-                    self._message = f"Invalid: press 1-{num_actions}"
             else:
                 self._message = ""
 
-    def show_round_summary(self, scores: List[int], player_names: List[str], round_num: int):
+    def show_round_summary(
+        self, scores: List[int], player_names: List[str], round_num: int
+    ):
         """Show round summary screen."""
         self.renderer.render_round_summary(scores, player_names, round_num)
 
