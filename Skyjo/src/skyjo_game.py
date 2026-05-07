@@ -103,7 +103,7 @@ class SkyjoGame:
                 return legal
 
             case TurnPhase.CHOOSE_DRAW:
-                if self.game_state.draw_pile:
+                if self.game_state.draw_pile or len(self.game_state.discard_pile) > 1:
                     legal.append(Action(ActionType.DRAW_HIDDEN_CARD))
                 if self.game_state.discard_pile:
                     legal.append(Action(ActionType.DRAW_OPEN_CARD))
@@ -143,9 +143,6 @@ class SkyjoGame:
         # Start of turn: choose draw source
         match action.type:
             case ActionType.DRAW_HIDDEN_CARD:
-                assert (
-                    self.game_state.draw_pile is not None
-                ), "Attempted to draw from empty draw pile"
                 self.game_state.hand_card = self.game_state.draw_card()
                 self.game_state.hand_card.reveal()
                 self.game_state.phase = TurnPhase.HAVE_DRAWN_HIDDEN

@@ -126,33 +126,55 @@ class GameState:
 
     def _rebuild_draw_pile_from_discard(self):
         if len(self.discard_pile) <= 1:
-            # Not enough cards to rebuild, but maybe still playable
-            # Just return, no card to draw yet
             return
 
         top = self.discard_pile.pop()
         self.draw_pile = self.discard_pile
+        for card in self.draw_pile:
+            card.face_up = False
         random.shuffle(self.draw_pile)
         self.discard_pile = [top]
+        logger.info(
+            "Draw pile empty – reshuffled %d cards from discard pile.",
+            len(self.draw_pile),
+        )
 
     def reset_deck_from_all_cards(self, player_states: List[PlayerState]):
+        # Start with cards still in the draw pile
+        all_cards: List[Card] = list(self.draw_pile)
         self.draw_pile = []
 
-        #  Collect all cards from player grids
+        # Collect hand card if present
+        if self.hand_card is not None:
+            all_cards.append(self.hand_card)
+            self.hand_card = None
+
+        # Collect all cards from player grids
         for ps in player_states:
             for row in ps.grid:
                 for card in row:
-                    card.face_up = False
-                    self.draw_pile.append(card)
+                    all_cards.append(card)
 
-        #  Collect all cards still in discard pile
-        self.draw_pile.extend(self.discard_pile)
+        # Collect all cards still in discard pile
+        all_cards.extend(self.discard_pile)
         self.discard_pile = []
 
-        #  Shuffle the deck
-        random.shuffle(self.draw_pile)
+        # Reset all cards to face-down
+        for card in all_cards:
+            card.face_up = False
 
-        #  Safety check: enough cards to deal grids
+        # Shuffle and set as draw pile
+        random.shuffle(all_cards)
+        self.draw_pile = all_cards
+
+        logger.info(
+            "Round reset: collected %d cards into draw pile.", len(self.draw_pile)
+        )
+        assert len(self.draw_pile) == 150, logger.error(
+            "Expected 150 cards in draw pile after reset, found %d", len(self.draw_pile)
+        )
+
+        # Safety check: enough cards to deal grids
         required_cards = len(player_states) * 12
         if len(self.draw_pile) < required_cards:
             raise RuntimeError(
