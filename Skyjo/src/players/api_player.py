@@ -1,8 +1,13 @@
+"""ApiPlayer: delegates Skyjo decisions to https://skyjo.artzima.dev."""
+
+from __future__ import annotations
+
 import json
+import logging
 import random
-import re
+import urllib.error
 import urllib.request
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from Skyjo.src.action import Action
 from Skyjo.src.action_type import ActionType
@@ -11,88 +16,34 @@ from Skyjo.src.observation import Observation
 from Skyjo.src.players.player import Player
 from Skyjo.src.turn_phase import TurnPhase
 
+logger = logging.getLogger(__name__)
+
 _API_BASE_URL = "https://skyjo.artzima.dev"
+_DEFAULT_TIMEOUT = 15
 
-# Valid agent type strings accepted by the remote API.
 AGENT_TYPES = ("heuristic", "baseline", "belief")
+HEURISTIC_BOTS = (
+    "greedy_value_replacement",
+    "column_hunter",
+    "information_first_flip",
+)
+
+ROWS = 3
+COLS = 4
+BOARD_SIZE = ROWS * COLS  # 12
+
+_TAKE_DISCARD_BASE = 0
+_DRAW_DECK_KEEP_BASE = 12
+_DRAW_DECK_DISCARD_FLIP_BASE = 24
+_SETUP_FLIP_BASE = 36
 
 
-def _make_agent_config(agent_type: str, simulations: int = 32) -> dict:
+def _post_json(url: str, payload: dict, timeout: int = _DEFAULT_TIMEOUT) -> dict:
+    """POST a JSON payload and return the decoded JSON response.
+
+    The remote service is fronted by a CDN that 403s requests without a
+    browser-like User-Agent and Origin/Referer header pair.
     """
-    Build the agent config dict for the given type.
-    agent_type: "heuristic" | "baseline" | "belief"
-    """
-    if agent_type not in AGENT_TYPES:
-        raise ValueError(f"agent_type must be one of {AGENT_TYPES}, got {agent_type!r}")
-    base = {
-        "type": agent_type,
-        "checkpoint_path": None,
-        "simulations": simulations,
-        "device": "cpu",
-        "ablate_belief_head": False,
-        "heuristic_bot_name": "greedy_value_replacement",
-        "heuristic_bot_epsilon": 0.0,
-    }
-    return base
-
-
-def _make_flip_agent_config(agent_type: str, simulations: int = 32) -> dict:
-    """
-    Agent config to use for flip decisions (setup reveal / flip-after-discard).
-    For heuristic agents, column_hunter is used because greedy_value_replacement
-    crashes with a 500 on that decision path. For model-based agents the same
-    config is used for all decisions.
-    """
-    cfg = _make_agent_config(agent_type, simulations)
-    if agent_type == "heuristic":
-        cfg["heuristic_bot_name"] = "column_hunter"
-    return cfg
-
-
-# Decision phase IDs as used by the remote API's SkyjoDecisionEnv.
-_PHASE_SETUP_REVEAL = 0
-_PHASE_CHOOSE_SOURCE = 1
-_PHASE_KEEP_OR_DISCARD = 2
-_PHASE_CHOOSE_POSITION = 3
-
-
-def _make_rng_state_b64() -> str:
-    # The server skips setstate when this string is empty (see restore_env_state).
-    # Sending our local numpy state would cause a version mismatch error.
-    return ""
-
-
-def _api_pos_to_local(api_pos: int):
-    """Convert row-major API position (0-11) to local (row, col). Layout: pos = row*4 + col."""
-    if not (0 <= api_pos <= 11):
-        raise ValueError(f"API returned out-of-bounds position {api_pos}")
-    return api_pos // 4, api_pos % 4
-
-
-def _card_grid_to_api_board(card_grid: List[List[Optional[Card]]]) -> dict:
-    """
-    Convert a 3×N local card grid to the API's board dict (row-major, 12 positions).
-    Columns that have been cleared from the local grid are marked removed=True.
-    Hidden card values use 0 as placeholder; the heuristic only observes visible values.
-    """
-    cards = [0] * 12
-    visible = [False] * 12
-    removed = [False] * 12
-    for row in range(3):
-        row_cards = card_grid[row] if card_grid is not None else []
-        for col in range(4):
-            api_pos = row * 4 + col
-            if col >= len(row_cards):
-                removed[api_pos] = True
-            else:
-                card = row_cards[col]
-                if card is not None and card.face_up:
-                    cards[api_pos] = card.value
-                    visible[api_pos] = True
-    return {"cards": cards, "visible": visible, "removed": removed}
-
-
-def _post_json(url: str, payload: dict, timeout: int = 10) -> dict:
     data = json.dumps(payload).encode("utf-8")
     origin = url.split("/api/")[0]
     req = urllib.request.Request(
@@ -111,20 +62,116 @@ def _post_json(url: str, payload: dict, timeout: int = 10) -> dict:
         },
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        body = ""
+        try:
+            body = exc.read().decode("utf-8", errors="replace")
+        except Exception:
+            pass
+        raise RuntimeError(f"HTTP {exc.code} from {url}: {body[:300]}") from exc
+
+
+def _api_pos_to_local(api_pos: int) -> Tuple[int, int]:
+    if not (0 <= api_pos < BOARD_SIZE):
+        raise ValueError(f"API returned out-of-bounds position {api_pos}")
+    return api_pos // COLS, api_pos % COLS
+
+
+def _card_grid_to_api_board(
+    card_grid: Optional[List[List[Optional[Card]]]],
+) -> dict:
+    """Convert a (possibly shrunken) local 3xN grid to the API's 12-slot board.
+
+    Cleared columns are presented as trailing ``removed=True`` slots so the
+    (row, col) -> api_pos mapping stays consistent. Hidden cards still get
+    their underlying values sent (the server masks them via ``visible``).
+    """
+    cards = [0] * BOARD_SIZE
+    visible = [False] * BOARD_SIZE
+    removed = [False] * BOARD_SIZE
+    if card_grid is None:
+        return {"cards": cards, "visible": visible, "removed": removed}
+
+    for row_idx in range(ROWS):
+        row_cards = card_grid[row_idx] if row_idx < len(card_grid) else []
+        for col_idx in range(COLS):
+            api_pos = row_idx * COLS + col_idx
+            if col_idx >= len(row_cards) or row_cards[col_idx] is None:
+                removed[api_pos] = True
+                continue
+            card = row_cards[col_idx]
+            cards[api_pos] = int(card.value)
+            visible[api_pos] = bool(card.face_up)
+    return {"cards": cards, "visible": visible, "removed": removed}
+
+
+def _decode_action(action_id: int) -> Tuple[str, int]:
+    if _TAKE_DISCARD_BASE <= action_id < _TAKE_DISCARD_BASE + BOARD_SIZE:
+        return "TAKE_DISCARD_AND_REPLACE", action_id - _TAKE_DISCARD_BASE
+    if _DRAW_DECK_KEEP_BASE <= action_id < _DRAW_DECK_KEEP_BASE + BOARD_SIZE:
+        return "DRAW_DECK_KEEP_AND_REPLACE", action_id - _DRAW_DECK_KEEP_BASE
+    if (
+        _DRAW_DECK_DISCARD_FLIP_BASE
+        <= action_id
+        < _DRAW_DECK_DISCARD_FLIP_BASE + BOARD_SIZE
+    ):
+        return "DRAW_DECK_DISCARD_AND_FLIP", action_id - _DRAW_DECK_DISCARD_FLIP_BASE
+    if _SETUP_FLIP_BASE <= action_id < _SETUP_FLIP_BASE + BOARD_SIZE:
+        return "SETUP_FLIP", action_id - _SETUP_FLIP_BASE
+    raise ValueError(f"Invalid action id from API: {action_id}")
+
+
+def _make_agent_config(
+    agent_type: str,
+    simulations: int,
+    heuristic_bot_name: str,
+    epsilon: float = 0.0,
+) -> dict:
+    if agent_type not in AGENT_TYPES:
+        raise ValueError(f"agent_type must be one of {AGENT_TYPES}, got {agent_type!r}")
+    if heuristic_bot_name not in HEURISTIC_BOTS:
+        raise ValueError(
+            f"heuristic_bot_name must be one of {HEURISTIC_BOTS}, "
+            f"got {heuristic_bot_name!r}"
+        )
+    return {
+        "type": agent_type,
+        "checkpoint_path": None,
+        "simulations": int(simulations),
+        "device": "cpu",
+        "ablate_belief_head": False,
+        "heuristic_bot_name": heuristic_bot_name,
+        "heuristic_bot_epsilon": float(epsilon),
+    }
+
+
+class _TurnPlan:
+    """A planned full turn returned by the remote API."""
+
+    __slots__ = ("macro", "position")
+
+    def __init__(self, macro: str, position: int) -> None:
+        self.macro = macro
+        self.position = position
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"_TurnPlan({self.macro}, pos={self.position})"
 
 
 class ApiPlayer(Player):
-    """
-    A Skyjo player that delegates every decision to the remote AI API at
-    https://skyjo.artzima.dev using the greedy_value_replacement heuristic.
+    """A Player that delegates decisions to the skyjo.artzima.dev backend.
 
-    Each call to select_action reconstructs a minimal game state from the
-    current observation, maps the local turn phase to the API's decision
-    phase, and issues one or two HTTP calls to /api/session/infer-agent-step.
-    Falls back to a random legal action if the API is unreachable or returns
-    an unexpected response.
+    Each *full local turn* triggers exactly one HTTP call (one extra call
+    per STARTING_FLIPS reveal). The remote ``/api/session/infer-action``
+    endpoint returns a single full-turn macro action; we cache the result
+    and replay it across the local sub-decision callbacks.
+
+    Any error (HTTP failure, malformed response, illegal mapped action)
+    transparently degrades to a random legal action so the calling game
+    loop never crashes.
     """
 
     def __init__(
@@ -134,242 +181,266 @@ class ApiPlayer(Player):
         agent_type: str = "heuristic",
         simulations: int = 32,
         base_url: str = _API_BASE_URL,
-    ):
-        """
-        agent_type: "heuristic" (greedy_value_replacement),
-                    "baseline"  (MuZero Baseline),
-                    "belief"    (Belief-Aware MuZero)
-        simulations: number of MCTS simulations (only used for baseline/belief)
-        """
+        heuristic_bot_name: str = "greedy_value_replacement",
+        heuristic_epsilon: float = 0.0,
+        # column_hunter is used for flip-only decisions because the
+        # remote greedy_value_replacement returns 500s on the SETUP /
+        # flip-after-discard paths.
+        flip_heuristic_bot_name: str = "column_hunter",
+        request_timeout: int = _DEFAULT_TIMEOUT,
+    ) -> None:
         super().__init__(player_id, player_name)
         self._base_url = base_url.rstrip("/")
-        self._rng_state_b64 = _make_rng_state_b64()
-        self._agent_main = _make_agent_config(agent_type, simulations)
-        self._agent_flip = _make_flip_agent_config(agent_type, simulations)
+        self._timeout = int(request_timeout)
+        self._agent_main = _make_agent_config(
+            agent_type, simulations, heuristic_bot_name, heuristic_epsilon
+        )
+        flip_bot = (
+            flip_heuristic_bot_name if agent_type == "heuristic" else heuristic_bot_name
+        )
+        self._agent_flip = _make_agent_config(agent_type, simulations, flip_bot, 0.0)
+        self._plan: Optional[_TurnPlan] = None
 
     # ------------------------------------------------------------------
-    # Public interface
+    # Public Player interface
     # ------------------------------------------------------------------
 
     def select_action(
         self, observation: Observation, legal_actions: List[Action]
     ) -> Action:
+        if not legal_actions:
+            raise ValueError("ApiPlayer.select_action called with no legal actions")
         try:
-            return self._select_via_api(observation, legal_actions)
-        except Exception as exc:
-            print(f"[ApiPlayer] falling back to random ({exc})")
-            print(f"actions: {legal_actions}")
+            return self._select(observation, legal_actions)
+        except Exception as exc:  # pragma: no cover - network resilience
+            logger.warning("ApiPlayer falling back to random legal action: %s", exc)
+            self._plan = None
             return random.choice(legal_actions)
 
     # ------------------------------------------------------------------
-    # Phase dispatching
+    # Per-phase dispatching
     # ------------------------------------------------------------------
 
-    def _select_via_api(
-        self, observation: Observation, legal_actions: List[Action]
-    ) -> Action:
-        state = self._build_state(observation)
+    def _select(self, observation: Observation, legal_actions: List[Action]) -> Action:
         phase = observation.turn_phase
 
         if phase == TurnPhase.STARTING_FLIPS:
-            return self._handle_setup_reveal(state, observation)
+            self._plan = None
+            return self._setup_flip_action(observation, legal_actions)
 
         if phase == TurnPhase.CHOOSE_DRAW:
-            return self._handle_choose_source(state, observation)
+            self._plan = self._fetch_turn_plan(observation, legal_actions)
+            return self._action_for_choose_draw(self._plan, legal_actions)
 
         if phase == TurnPhase.HAVE_DRAWN_HIDDEN:
-            return self._handle_keep_or_discard(state, observation, legal_actions)
+            return self._action_for_have_drawn_hidden(legal_actions)
 
         if phase == TurnPhase.HAVE_DRAWN_OPEN:
-            return self._handle_choose_position(
-                state,
-                observation,
-                source="DISCARD",
-                drawn_value=(
-                    observation.hand_card.value if observation.hand_card else None
-                ),
-                keep=True,
-            )
+            return self._action_for_have_drawn_open(legal_actions)
 
         if phase == TurnPhase.HAVE_TO_FLIP_AFTER_DISCARD:
-            # The drawn card was just discarded, so it's now the discard top.
-            drawn_value = (
-                observation.discard_top.value if observation.discard_top else 0
-            )
-            return self._handle_choose_position(
-                state,
-                observation,
-                source="DECK",
-                drawn_value=drawn_value,
-                keep=False,
-            )
+            return self._action_for_flip_after_discard(legal_actions)
 
-        return random.choice(legal_actions)
+        return legal_actions[0]
 
     # ------------------------------------------------------------------
-    # Per-phase handlers
+    # API calls
     # ------------------------------------------------------------------
 
-    def _handle_setup_reveal(self, state: dict, observation: Observation) -> Action:
-        context = self._make_context(observation.player_id, _PHASE_SETUP_REVEAL)
-        resp = self._infer_step(state, context, agent=self._agent_flip)
-        row, col = _api_pos_to_local(self._parse_pos(resp["step_log"]))
-        return Action(ActionType.FLIP_CARD, pos=(row, col))
+    def _fetch_turn_plan(
+        self, observation: Observation, legal_actions: List[Action]
+    ) -> _TurnPlan:
+        state = self._build_state(observation, phase="MAIN")
+        resp = self._infer_action(state, self._agent_main)
+        ai = resp.get("ai_action") or {}
+        action_id = int(ai["action_id"])
+        macro, pos = _decode_action(action_id)
+        plan = _TurnPlan(macro=macro, position=pos)
+        if not self._plan_is_locally_feasible(plan, legal_actions):
+            raise RuntimeError(
+                f"API plan {plan} not compatible with legal actions {legal_actions}"
+            )
+        return plan
 
-    def _handle_choose_source(self, state: dict, observation: Observation) -> Action:
-        context = self._make_context(observation.player_id, _PHASE_CHOOSE_SOURCE)
-        resp = self._infer_step(state, context)
-        if "discard" in resp["step_log"]:
-            return Action(ActionType.DRAW_OPEN_CARD)
-        return Action(ActionType.DRAW_HIDDEN_CARD)
-
-    def _handle_keep_or_discard(
-        self, state: dict, observation: Observation, legal_actions: List[Action]
+    def _setup_flip_action(
+        self, observation: Observation, legal_actions: List[Action]
     ) -> Action:
-        drawn_value = observation.hand_card.value if observation.hand_card else None
-        context = self._make_context(
-            observation.player_id,
-            _PHASE_KEEP_OR_DISCARD,
-            source="DECK",
-            drawn_value=drawn_value,
+        state = self._build_state(observation, phase="SETUP")
+        resp = self._infer_action(state, self._agent_flip)
+        ai = resp.get("ai_action") or {}
+        action_id = int(ai["action_id"])
+        macro, api_pos = _decode_action(action_id)
+        if macro != "SETUP_FLIP":
+            raise RuntimeError(
+                f"Expected SETUP_FLIP from API in setup phase, got {macro}"
+            )
+        return self._action_with_pos(
+            ActionType.FLIP_CARD, api_pos, legal_actions, ActionType.FLIP_CARD
         )
-        resp = self._infer_step(state, context)
 
-        if "keep" in resp["step_log"]:
-            # The response contains the context needed for the position step.
-            next_ctx = resp.get("decision_context")
-            if next_ctx is None:
-                # Unexpected: fall back to first legal SWAP_CARD.
-                for a in legal_actions:
-                    if a.type == ActionType.SWAP_CARD:
-                        return a
-                return legal_actions[0]
-            resp2 = self._infer_step(state, next_ctx)
-            row, col = _api_pos_to_local(self._parse_pos(resp2["step_log"]))
-            return Action(ActionType.SWAP_CARD, pos=(row, col))
+    def _infer_action(self, state: dict, agent: dict) -> dict:
+        payload = {"state": state, "agent": agent}
+        return _post_json(
+            f"{self._base_url}/api/session/infer-action",
+            payload,
+            timeout=self._timeout,
+        )
 
-        # Discard: find the DISCARD_CARD action.
+    # ------------------------------------------------------------------
+    # Plan -> local Action translation
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _plan_is_locally_feasible(plan: _TurnPlan, legal_actions: List[Action]) -> bool:
+        macro = plan.macro
+        if macro == "TAKE_DISCARD_AND_REPLACE":
+            return any(a.type == ActionType.DRAW_OPEN_CARD for a in legal_actions)
+        if macro in ("DRAW_DECK_KEEP_AND_REPLACE", "DRAW_DECK_DISCARD_AND_FLIP"):
+            return any(a.type == ActionType.DRAW_HIDDEN_CARD for a in legal_actions)
+        return False
+
+    @staticmethod
+    def _action_for_choose_draw(plan: _TurnPlan, legal_actions: List[Action]) -> Action:
+        if plan.macro == "TAKE_DISCARD_AND_REPLACE":
+            target_type = ActionType.DRAW_OPEN_CARD
+        else:
+            target_type = ActionType.DRAW_HIDDEN_CARD
         for a in legal_actions:
-            if a.type == ActionType.DISCARD_CARD:
+            if a.type == target_type:
                 return a
         return legal_actions[0]
 
-    def _handle_choose_position(
-        self,
-        state: dict,
-        observation: Observation,
-        source: str,
-        drawn_value: Optional[int],
-        keep: bool,
-    ) -> Action:
-        context = self._make_context(
-            observation.player_id,
-            _PHASE_CHOOSE_POSITION,
-            source=source,
-            drawn_value=drawn_value,
-            keep=keep,
+    def _action_for_have_drawn_hidden(self, legal_actions: List[Action]) -> Action:
+        plan = self._plan
+        if plan is None:
+            return random.choice(legal_actions)
+        if plan.macro == "DRAW_DECK_KEEP_AND_REPLACE":
+            return self._action_with_pos(
+                ActionType.SWAP_CARD,
+                plan.position,
+                legal_actions,
+                ActionType.SWAP_CARD,
+            )
+        if plan.macro == "DRAW_DECK_DISCARD_AND_FLIP":
+            for a in legal_actions:
+                if a.type == ActionType.DISCARD_CARD:
+                    return a
+        for a in legal_actions:
+            if a.type == ActionType.SWAP_CARD:
+                return a
+        return legal_actions[0]
+
+    def _action_for_have_drawn_open(self, legal_actions: List[Action]) -> Action:
+        plan = self._plan
+        swap_actions = [a for a in legal_actions if a.type == ActionType.SWAP_CARD]
+        if plan is None or plan.macro != "TAKE_DISCARD_AND_REPLACE":
+            return random.choice(swap_actions or legal_actions)
+        return self._action_with_pos(
+            ActionType.SWAP_CARD,
+            plan.position,
+            legal_actions,
+            ActionType.SWAP_CARD,
         )
-        agent = self._agent_main if keep else self._agent_flip
-        resp = self._infer_step(state, context, agent=agent)
-        pos = self._parse_pos(resp["step_log"])
-        row, col = _api_pos_to_local(pos)
-        action_type = ActionType.SWAP_CARD if keep else ActionType.FLIP_CARD
-        return Action(action_type, pos=(row, col))
 
-    # ------------------------------------------------------------------
-    # HTTP
-    # ------------------------------------------------------------------
+    def _action_for_flip_after_discard(self, legal_actions: List[Action]) -> Action:
+        plan = self._plan
+        if plan is None or plan.macro != "DRAW_DECK_DISCARD_AND_FLIP":
+            return random.choice(legal_actions)
+        return self._action_with_pos(
+            ActionType.FLIP_CARD,
+            plan.position,
+            legal_actions,
+            ActionType.FLIP_CARD,
+        )
 
-    def _infer_step(self, state: dict, decision_context, agent: dict = None) -> dict:
-        payload = {
-            "state": state,
-            "agent": agent if agent is not None else self._agent_main,
-            "decision_context": decision_context,
-        }
-        return _post_json(f"{self._base_url}/api/session/infer-agent-step", payload)
+    @staticmethod
+    def _action_with_pos(
+        action_type: ActionType,
+        api_pos: int,
+        legal_actions: List[Action],
+        fallback_type: ActionType,
+    ) -> Action:
+        target = _api_pos_to_local(api_pos)
+        for a in legal_actions:
+            if a.type == action_type and a.pos == target:
+                return a
+        candidates = [a for a in legal_actions if a.type == fallback_type]
+        if candidates:
+            return random.choice(candidates)
+        return random.choice(legal_actions)
 
     # ------------------------------------------------------------------
     # State construction
     # ------------------------------------------------------------------
 
-    def _build_state(self, observation: Observation) -> dict:
-        # opponent_cards is a list of length num_players, indexed by player_id.
-        # Entry i is the opponent's grid if visible, None if it's our own slot or unknown.
-        num_players = len(observation.opponent_cards)
+    def _build_state(self, observation: Observation, phase: str) -> dict:
+        num_players = max(1, len(observation.opponent_cards))
 
-        empty_board = {
-            "cards": [0] * 12,
-            "visible": [False] * 12,
-            "removed": [False] * 12,
-        }
-        boards = [dict(empty_board) for _ in range(num_players)]
-        boards[observation.player_id] = _card_grid_to_api_board(observation.card_grid)
-        for i, opp_grid in enumerate(observation.opponent_cards):
-            if i != observation.player_id and opp_grid is not None:
-                boards[i] = _card_grid_to_api_board(opp_grid)
+        boards = []
+        for pid in range(num_players):
+            if pid == observation.player_id:
+                boards.append(_card_grid_to_api_board(observation.card_grid))
+            else:
+                boards.append(_card_grid_to_api_board(observation.opponent_cards[pid]))
 
-        phase = (
-            "SETUP" if observation.turn_phase == TurnPhase.STARTING_FLIPS else "MAIN"
-        )
+        # The server only consults setup_reveals_remaining when phase is
+        # SETUP. Mark only the active player as needing one reveal so its
+        # legal-action set is the unrevealed positions on its own board.
         setup_reveals = [0] * num_players
-        if observation.turn_phase == TurnPhase.STARTING_FLIPS:
+        if phase == "SETUP":
             setup_reveals[observation.player_id] = 1
 
-        discard_pile = []
+        # Server agents only ever peek at discard_pile[-1].
+        discard_pile: List[int] = []
         if observation.discard_top is not None:
-            discard_pile = [observation.discard_top.value]
+            discard_pile = [int(observation.discard_top.value)]
+
+        # Final-turn / round_ender bookkeeping.
+        pending_final: List[int] = []
+        round_ender: Optional[int] = None
+        if observation.final_turn_phase and observation.first_finisher_id is not None:
+            round_ender = int(observation.first_finisher_id)
+            pending_final = [
+                pid
+                for pid in range(num_players)
+                if pid != observation.first_finisher_id
+            ]
+
+        total_scores = list(observation.total_scores or [0] * num_players)
+        round_scores = list(observation.scores or [0] * num_players)
+        total_scores = (total_scores + [0] * num_players)[:num_players]
+        round_scores = (round_scores + [0] * num_players)[:num_players]
+
+        # Deck card values are not used by the server agents; only the
+        # length acts as a coarse round-progression signal.
+        deck = [0] * max(0, int(observation.draw_pile_size))
 
         return {
             "initial_seed": 0,
-            "rng_state_b64": self._rng_state_b64,
+            # Empty -> server skips rng.setstate(), avoiding pickle
+            # / numpy version mismatches.
+            "rng_state_b64": "",
             "num_players": num_players,
             "history_window_k": 16,
             "score_limit": 100,
             "setup_mode": "auto",
-            "manual_initial_reveals": False,
+            # We always supply boards / setup_reveals explicitly.
+            "manual_initial_reveals": True,
             "round_index": 1,
-            "global_step": 1,
-            "turns_in_round": 1,
-            "phase": phase,
-            "current_player": observation.player_id,
-            "scores": list(observation.scores),
-            "round_scores": list(observation.scores),
-            "deck": [0] * observation.draw_pile_size,
+            "global_step": 0,
+            "turns_in_round": 0,
+            "phase": phase,  # "SETUP" or "MAIN"
+            "current_player": int(observation.player_id),
+            "scores": total_scores,
+            "round_scores": round_scores,
+            "deck": deck,
             "discard_pile": discard_pile,
             "boards": boards,
             "setup_reveals_remaining": setup_reveals,
-            "pending_final_turn_players": [],
-            "round_ender": None,
+            "pending_final_turn_players": pending_final,
+            "round_ender": round_ender,
             "column_clear_used_this_round": [False] * num_players,
             "game_over": False,
             "round_history_start_index": 0,
             "public_history": [],
         }
-
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _make_context(
-        actor: int,
-        phase_id: int,
-        source: Optional[str] = None,
-        drawn_value: Optional[int] = None,
-        keep: Optional[bool] = None,
-    ) -> dict:
-        return {
-            "actor_player": actor,
-            "decision_phase_id": phase_id,
-            "pending_source": source,
-            "pending_drawn_value": drawn_value,
-            "pending_keep_drawn": keep,
-        }
-
-    @staticmethod
-    def _parse_pos(step_log: str) -> int:
-        """Extract the trailing integer position from a step_log string."""
-        match = re.search(r"(\d+)\s*$", step_log)
-        if match:
-            return int(match.group(1))
-        raise ValueError(f"No position found in step_log: {step_log!r}")
