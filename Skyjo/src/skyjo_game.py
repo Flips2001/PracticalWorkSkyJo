@@ -1,5 +1,6 @@
 import copy
 import logging
+from collections import Counter
 
 from Skyjo.src.action import Action
 from Skyjo.src.action_type import ActionType
@@ -13,6 +14,8 @@ from Skyjo.src.turn_phase import TurnPhase
 from typing import Callable, List, Optional
 
 logger = logging.getLogger(__name__)
+
+_CARD_VALUES = list(range(-2, 13))
 
 
 class SkyjoGame:
@@ -78,10 +81,15 @@ class SkyjoGame:
             ),
             draw_pile_size=len(self.game_state.draw_pile),
             turn_phase=self.game_state.phase,
+            draw_pile_value_counts=self._get_draw_pile_value_counts(),
             total_scores=list(self.game_state.all_player_final_scores),
             final_turn_phase=self.game_state.final_turn_phase,
             first_finisher_id=self.game_state.first_finisher_id,
         )
+
+    def _get_draw_pile_value_counts(self) -> List[int]:
+        value_counts = Counter(card.value for card in self.game_state.draw_pile)
+        return [value_counts.get(value, 0) for value in _CARD_VALUES]
 
     def get_legal_actions(self, player: Player) -> List[Action]:
         """

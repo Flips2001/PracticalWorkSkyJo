@@ -1,5 +1,5 @@
 """
-Encodes an Observation into a flat 70-dim numpy vector for the RL agent.
+Encodes an Observation into a flat 85-dim numpy vector for the RL agent.
 
 Card values are normalized via (value + 2) / 14 → [0, 1].
 Each grid slot is encoded as a (value, is_revealed) pair:
@@ -20,9 +20,28 @@ from Skyjo.src.observation import Observation
 from Skyjo.src.card import Card
 from Skyjo.src.turn_phase import TurnPhase
 
-OBS_SIZE = 70
+OBS_SIZE = 85
 GRID_ROWS = 3
 GRID_COLS = 4
+CARD_VALUES = list(range(-2, 13))
+
+_INITIAL_CARD_COUNTS = {
+    -2: 5,
+    -1: 10,
+    0: 15,
+    1: 10,
+    2: 10,
+    3: 10,
+    4: 10,
+    5: 10,
+    6: 10,
+    7: 10,
+    8: 10,
+    9: 10,
+    10: 10,
+    11: 10,
+    12: 10,
+}
 
 # Phase ordering for one-hot encoding (only phases where agent acts)
 _PHASE_ORDER = [
@@ -87,10 +106,22 @@ def _get_opponent_score(obs: Observation) -> float:
     return 0.0
 
 
+def _encode_draw_pile_value_counts(obs: Observation, obs_vec: np.ndarray, offset: int):
+    """Encode normalized remaining count per value for draw pile cards (-2..12)."""
+    if not obs.draw_pile_value_counts:
+        return
+
+    for i, value in enumerate(CARD_VALUES):
+        if i >= len(obs.draw_pile_value_counts):
+            break
+        initial_count = _INITIAL_CARD_COUNTS[value]
+        obs_vec[offset + i] = obs.draw_pile_value_counts[i] / float(initial_count)
+
+
 def encode_observation(obs: Observation) -> np.ndarray:
     """Encode an Observation into a flat float32 numpy array.
 
-    Layout (70 dims):
+    Layout (85 dims):
       0-23:  Own grid (12 slots × 2: value, revealed)
       24-47: Opponent grid (12 slots × 2)
              Grid slot states: face-down → (0, 0); face-up → (norm_val, 1);
@@ -103,6 +134,8 @@ def encode_observation(obs: Observation) -> np.ndarray:
       60-67: Column match counts (own 4, opponent 4)
       68:    Final turn flag
       69:    Is first finisher flag
+      70-84: Remaining draw-pile card counts per value -2..12,
+             normalized by initial deck counts for each value
     """
     vec = np.zeros(OBS_SIZE, dtype=np.float32)
 
@@ -154,6 +187,9 @@ def encode_observation(obs: Observation) -> np.ndarray:
         )
         else 0.0
     )
+
+    # Draw-pile card value distribution (70-84)
+    _encode_draw_pile_value_counts(obs, vec, 70)
 
     return vec
 

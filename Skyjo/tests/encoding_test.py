@@ -36,6 +36,7 @@ def _make_obs(**kwargs):
         discard_top=None,
         draw_pile_size=100,
         turn_phase=TurnPhase.CHOOSE_DRAW,
+        draw_pile_value_counts=None,
     )
     defaults.update(kwargs)
     return Observation(**defaults)
@@ -170,6 +171,23 @@ class TestEncodeObservation:
         obs = _make_obs(first_finisher_id=1)  # opponent is finisher
         vec = encode_observation(obs)
         assert vec[69] == pytest.approx(0.0)
+
+    def test_draw_pile_value_counts_absent(self):
+        obs = _make_obs(draw_pile_value_counts=None)
+        vec = encode_observation(obs)
+        assert np.allclose(vec[70:85], 0.0)
+
+    def test_draw_pile_value_counts_encoded(self):
+        counts = [0] * 15
+        counts[0] = 5  # value -2 (max 5)
+        counts[2] = 9  # value 0 (max 15)
+        counts[14] = 5  # value 12 (max 10)
+        obs = _make_obs(draw_pile_value_counts=counts)
+        vec = encode_observation(obs)
+
+        assert vec[70] == pytest.approx(1.0)
+        assert vec[72] == pytest.approx(9.0 / 15.0)
+        assert vec[84] == pytest.approx(0.5)
 
 
 class TestObservationSpace:
