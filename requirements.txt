@@ -5,3 +5,7 @@ pytest
 pytest-emoji
 pytest-md
 pre-commit
+torch
+torchvision
+sb3_contrib
+tqdm
