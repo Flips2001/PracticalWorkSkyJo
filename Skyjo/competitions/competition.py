@@ -14,7 +14,7 @@ if __name__ == "__main__":
         "src",
         "rl",
         "checkpoints",
-        "skyjo_ppo_best.zip",
+        "skyjo_ppo_best-loong-normalized.zip",
     )
     player1 = RLPlayer(
         player_id=0,
