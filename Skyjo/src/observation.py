@@ -20,6 +20,8 @@ class Observation:
     discard_top: Optional[Card]
     draw_pile_size: int
     turn_phase: TurnPhase
+    # Remaining draw-pile card counts for values -2..12 (length 15)
+    draw_pile_value_counts: Optional[List[int]] = None
     # Total accumulated game scores across all rounds
     total_scores: List[int] = None
     # Final turn info
