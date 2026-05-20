@@ -17,7 +17,7 @@ DEVICE = "cpu"
 CHECKPOINT_DIR = os.path.join(os.path.dirname(__file__), "checkpoints")
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 
-TOTAL_TIMESTEPS = 60_000_000
+TOTAL_TIMESTEPS = 30_000_000
 NUM_CHECKPOINTS = 10
 NUM_EVALS = 20
 SAVE_EVERY = TOTAL_TIMESTEPS // NUM_CHECKPOINTS
