@@ -1,7 +1,6 @@
 """Training script for Skyjo RL agent via self-play using MaskablePPO."""
 
 import os
-import numpy as np
 import torch
 from sb3_contrib import MaskablePPO
 from stable_baselines3.common.vec_env import SubprocVecEnv
@@ -116,7 +115,10 @@ class TqdmCallback(BaseCallback):
 
 def train():
     env = SubprocVecEnv(
-        [make_env(best_model_path=_BEST_MODEL_PATH, device=DEVICE) for _ in range(NUM_PROCS)]
+        [
+            make_env(best_model_path=_BEST_MODEL_PATH, device=DEVICE)
+            for _ in range(NUM_PROCS)
+        ]
     )
 
     policy_kwargs = dict(
