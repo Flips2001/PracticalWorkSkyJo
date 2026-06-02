@@ -19,3 +19,7 @@
 
 ## Play a game
 Run the `main.py` file to play a game of Skyjo. To change the number or type of players, add, change, or remove the player declarations and the `add_player()` calls.
+
+Run with `--analyze` to inspect the RL player one action at a time. In this
+mode, each RL sub-action pauses until Enter is pressed, and the terminal UI
+shows an integrated-gradients attribution panel for that move.

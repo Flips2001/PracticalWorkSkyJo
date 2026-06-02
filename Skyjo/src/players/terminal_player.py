@@ -4,7 +4,7 @@ Replaces the old print/input HumanPlayer with a modern TUI.
 """
 
 import curses
-from typing import List
+from typing import Any, List, Optional
 
 from Skyjo.src.action import Action
 from Skyjo.src.observation import Observation
@@ -16,13 +16,21 @@ class TerminalPlayer(Player):
     """Interactive player using curses-based terminal UI."""
 
     def __init__(
-        self, player_id: int, player_name: str, stdscr, opponent_name: str = "Opponent"
+        self,
+        player_id: int,
+        player_name: str,
+        stdscr,
+        opponent_name: str = "Opponent",
+        analyze_mode: bool = False,
     ):
         super().__init__(player_id, player_name)
         self.stdscr = stdscr
         self.renderer = TerminalRenderer(stdscr)
         self.opponent_name = opponent_name
+        self.analyze_mode = analyze_mode
         self._message = ""
+        self._opponent_last_action = ""
+        self._opponent_explanation = None
 
     def select_action(
         self, observation: Observation, legal_actions: List[Action]
@@ -46,6 +54,12 @@ class TerminalPlayer(Player):
                 legal_actions=legal_actions,
                 selected_index=selected_index,
                 message=self._message,
+                opponent_last_action=(
+                    self._opponent_last_action if self.analyze_mode else ""
+                ),
+                opponent_explanation=(
+                    self._opponent_explanation if self.analyze_mode else None
+                ),
             )
 
             # Get user input
@@ -71,6 +85,43 @@ class TerminalPlayer(Player):
                 raise KeyboardInterrupt("Player quit the game")
             else:
                 self._message = ""
+
+    def observe_action(
+        self,
+        acting_player,
+        action: Action,
+        explanation: Any = None,
+        observation: Optional[Observation] = None,
+    ) -> None:
+        if acting_player.player_id == self.player_id:
+            return
+        if not self.analyze_mode:
+            return
+
+        self._opponent_last_action = f"{acting_player.player_name}: {action}"
+        self._opponent_explanation = explanation
+        if observation is not None:
+            self._show_analysis_pause(observation)
+
+    def _show_analysis_pause(self, observation: Observation) -> None:
+        while True:
+            self.renderer.render_game(
+                observation=observation,
+                player_name=self.player_name,
+                opponent_name=self.opponent_name,
+                legal_actions=[],
+                selected_index=0,
+                message="Analyze mode: press Enter to continue.",
+                opponent_last_action=self._opponent_last_action,
+                opponent_explanation=self._opponent_explanation,
+                show_actions=False,
+                help_text=" Enter Continue  │  q Quit ",
+            )
+            key = self.stdscr.getch()
+            if key in (curses.KEY_ENTER, 10, 13):
+                return
+            if key == ord("q") or key == ord("Q"):
+                raise KeyboardInterrupt("Player quit the game")
 
     def show_round_summary(
         self, scores: List[int], player_names: List[str], round_num: int

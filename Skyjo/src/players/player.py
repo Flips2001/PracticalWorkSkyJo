@@ -3,7 +3,7 @@ from abc import ABC, abstractmethod
 from Skyjo.src.action import Action
 from Skyjo.src.observation import Observation
 from Skyjo.src.player_state import PlayerState
-from typing import List
+from typing import Any, List, Optional
 
 
 class Player(ABC):
@@ -29,6 +29,16 @@ class Player(ABC):
         :return: Selected action
         """
         pass
+
+    def observe_action(
+        self,
+        acting_player: "Player",
+        action: Action,
+        explanation: Any = None,
+        observation: Optional[Observation] = None,
+    ) -> None:
+        """Receive optional notification after another player selects an action."""
+        return None
 
     def __str__(self):
         return f"Player {self.player_id}: {self.player_name}"

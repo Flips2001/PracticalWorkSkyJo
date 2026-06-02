@@ -232,6 +232,7 @@ class SkyjoGame:
                     break
                 action = player.select_action(observation, legal_actions)
                 self.execute_action(player, action)
+                self._notify_action_selected(player, action)
 
         self.game_state.phase = TurnPhase.CHOOSE_DRAW
 
@@ -292,7 +293,20 @@ class SkyjoGame:
             )
             self.execute_action(player, selected_action)
             self.game_state.remove_unfiorm_columns_to_discard_pile(player.player_state)
+            self._notify_action_selected(player, selected_action)
         self.game_state.phase = TurnPhase.CHOOSE_DRAW
+
+    def _notify_action_selected(self, player: Player, action: Action) -> None:
+        explanation = getattr(player, "last_explanation", None)
+        for observer in self.players:
+            if observer.player_id == player.player_id:
+                continue
+            observer.observe_action(
+                player,
+                action,
+                explanation,
+                observation=self.get_observation(observer),
+            )
 
     def reset(self):
         for player_state in self.get_all_player_states():

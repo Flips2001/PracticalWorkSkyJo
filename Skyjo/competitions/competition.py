@@ -7,19 +7,23 @@ from tqdm import tqdm
 
 NUM_GAMES = 1000
 
-if __name__ == "__main__":
-    model_path = os.path.join(
+
+def get_model_path():
+    return os.path.join(
         os.path.dirname(__file__),
         os.pardir,
         "src",
         "rl",
         "checkpoints",
-        "skyjo_ppo_best.zip",
+        "skyjo_ppo_best-normalized-history.zip",
     )
+
+
+if __name__ == "__main__":
     player1 = RLPlayer(
         player_id=0,
         player_name="RL Player",
-        model_path=model_path,
+        model_path=get_model_path(),
     )
     player2 = PhillipsPlayer(player_id=1, player_name="Phillips")
     players = [player1, player2]

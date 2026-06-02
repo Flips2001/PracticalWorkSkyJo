@@ -8,7 +8,7 @@ from Skyjo.src.rl.encoding import (
     OBS_SIZE,
     encode_observation,
     get_observation_space,
-    _normalize_card_value,
+    normalize_card_value,
     _column_match_counts,
 )
 
@@ -44,13 +44,13 @@ def _make_obs(**kwargs):
 
 class TestNormalizeCardValue:
     def test_min_value(self):
-        assert _normalize_card_value(-2) == pytest.approx(0.0)
+        assert normalize_card_value(-2) == pytest.approx(0.0)
 
     def test_max_value(self):
-        assert _normalize_card_value(12) == pytest.approx(1.0)
+        assert normalize_card_value(12) == pytest.approx(1.0)
 
     def test_zero(self):
-        assert _normalize_card_value(0) == pytest.approx(2.0 / 14.0)
+        assert normalize_card_value(0) == pytest.approx(2.0 / 14.0)
 
 
 class TestColumnMatchCounts:
@@ -91,7 +91,7 @@ class TestEncodeObservation:
         obs = _make_obs(card_grid=grid)
         vec = encode_observation(obs)
         # slot 0: value, slot 1: is_revealed
-        assert vec[0] == pytest.approx(_normalize_card_value(5))
+        assert vec[0] == pytest.approx(normalize_card_value(5))
         assert vec[1] == pytest.approx(1.0)
 
     def test_own_grid_hidden_cards(self):
@@ -105,7 +105,7 @@ class TestEncodeObservation:
     def test_discard_top_present(self):
         obs = _make_obs(discard_top=Card(value=7, face_up=True))
         vec = encode_observation(obs)
-        assert vec[48] == pytest.approx(_normalize_card_value(7))
+        assert vec[48] == pytest.approx(normalize_card_value(7))
         assert vec[49] == pytest.approx(1.0)
 
     def test_discard_top_absent(self):
@@ -117,7 +117,7 @@ class TestEncodeObservation:
     def test_hand_card_present(self):
         obs = _make_obs(hand_card=Card(value=3, face_up=True))
         vec = encode_observation(obs)
-        assert vec[50] == pytest.approx(_normalize_card_value(3))
+        assert vec[50] == pytest.approx(normalize_card_value(3))
         assert vec[51] == pytest.approx(1.0)
 
     def test_hand_card_absent(self):

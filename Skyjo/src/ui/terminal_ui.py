@@ -4,7 +4,7 @@ Provides a full-screen, color-coded game display with in-place updates.
 """
 
 import curses
-from typing import List
+from typing import Any, Dict, List, Optional, Tuple
 
 from Skyjo.src.card import Card
 from Skyjo.src.observation import Observation
@@ -23,6 +23,12 @@ COLOR_SELECTED = 7  # currently selected item
 COLOR_DISCARD = 8  # discard pile
 COLOR_PHASE = 9  # phase info
 COLOR_SCORE = 10  # score display
+
+# Integrated-gradients grid highlight tuning. Keep this selective: the text panel
+# carries the detail, while the grid should only draw attention to clear signals.
+ATTRIBUTION_BACKGROUND_THRESHOLD = 0.90
+ATTRIBUTION_UNDERLINE_THRESHOLD = 0.70
+ATTRIBUTION_MAX_HIGHLIGHTED_CELLS = 5
 
 
 def init_colors():
@@ -95,10 +101,21 @@ class TerminalRenderer:
         legal_actions: List,
         selected_index: int,
         message: str = "",
+        opponent_last_action: str = "",
+        opponent_explanation: Optional[Any] = None,
+        show_actions: bool = True,
+        help_text: str = " ↑↓ Navigate  │  Enter Select  │  q Quit ",
     ):
         """Render the full game state."""
         self.stdscr.erase()
         max_y, max_x = self.stdscr.getmaxyx()
+        self_grid_attributions = {}
+        opponent_grid_attributions = {}
+        if opponent_explanation is not None and not getattr(
+            opponent_explanation, "error", None
+        ):
+            self_grid_attributions = opponent_explanation.grid_map("opponent")
+            opponent_grid_attributions = opponent_explanation.grid_map("own")
 
         row = 0
         # Title bar
@@ -170,6 +187,7 @@ class TerminalRenderer:
             observation.card_grid,
             observation.scores[observation.player_id],
             is_self=True,
+            attributions=self_grid_attributions,
         )
 
         # Opponent grid on the right side
@@ -187,13 +205,21 @@ class TerminalRenderer:
                         opp_grid,
                         opp_score,
                         is_self=False,
+                        attributions=opponent_grid_attributions,
                     )
                     break
 
         row = grid_start_row + 10
 
         # Action selection area
-        self._render_actions(row, legal_actions, selected_index)
+        if show_actions:
+            self._render_actions(row, legal_actions, selected_index)
+        self._render_opponent_explanation(
+            row,
+            40,
+            opponent_last_action,
+            opponent_explanation,
+        )
 
         # Status message
         if message:
@@ -205,7 +231,6 @@ class TerminalRenderer:
             self._safe_addstr(msg_row, 2, message, curses.color_pair(COLOR_TITLE))
 
         # Help bar at bottom
-        help_text = " ↑↓ Navigate  │  Enter Select  │  q Quit "
         help_row = max_y - 1
         self._safe_addstr(
             help_row,
@@ -265,9 +290,24 @@ class TerminalRenderer:
         grid: List[List[Card]],
         score: int,
         is_self: bool,
+        attributions: Optional[Dict[Tuple[int, int], Any]] = None,
     ):
         """Render a player's card grid."""
         row = start_row
+        attributions = attributions or {}
+        max_abs_attribution = max(
+            (cell.abs_attribution for cell in attributions.values()),
+            default=0.0,
+        )
+        highlighted_positions = {
+            pos
+            for pos, cell in sorted(
+                attributions.items(),
+                key=lambda item: item[1].abs_attribution,
+                reverse=True,
+            )[:ATTRIBUTION_MAX_HIGHLIGHTED_CELLS]
+            if cell.abs_attribution > 0
+        }
 
         # Player name and score
         header = f"{'▶ ' if is_self else '  '}{name}"
@@ -313,8 +353,23 @@ class TerminalRenderer:
             for c_idx, card in enumerate(card_row):
                 card_str = format_card(card)
                 color = get_card_color(card)
+                attr = curses.color_pair(color) | curses.A_BOLD
+                cell_attr = attributions.get((r_idx, c_idx))
+                if (
+                    cell_attr is not None
+                    and (r_idx, c_idx) in highlighted_positions
+                    and max_abs_attribution > 0
+                ):
+                    strength = cell_attr.abs_attribution / max_abs_attribution
+                    if strength >= ATTRIBUTION_BACKGROUND_THRESHOLD:
+                        attr |= curses.A_REVERSE
+                    elif strength >= ATTRIBUTION_UNDERLINE_THRESHOLD:
+                        attr |= curses.A_UNDERLINE
                 self._safe_addstr(
-                    row, col, card_str, curses.color_pair(color) | curses.A_BOLD
+                    row,
+                    col,
+                    card_str,
+                    attr,
                 )
                 if c_idx < len(card_row) - 1:
                     self._safe_addstr(
@@ -370,6 +425,49 @@ class TerminalRenderer:
                 attr = curses.color_pair(COLOR_DEFAULT)
 
             self._safe_addstr(row + i, 2, action_text, attr)
+
+    def _render_opponent_explanation(
+        self,
+        row: int,
+        col: int,
+        opponent_last_action: str,
+        opponent_explanation: Optional[Any],
+    ):
+        """Render the latest RL attribution summary."""
+        if not opponent_last_action and opponent_explanation is None:
+            return
+
+        self._safe_addstr(
+            row,
+            col,
+            "Integrated Gradients",
+            curses.color_pair(COLOR_TITLE) | curses.A_BOLD | curses.A_UNDERLINE,
+        )
+        row += 1
+
+        if opponent_last_action:
+            self._safe_addstr(
+                row,
+                col,
+                opponent_last_action,
+                curses.color_pair(COLOR_PHASE) | curses.A_BOLD,
+            )
+            row += 1
+
+        if opponent_explanation is None:
+            return
+
+        for line in opponent_explanation.summary_lines(
+            max_features=5,
+            include_action=not bool(opponent_last_action),
+        ):
+            self._safe_addstr(
+                row,
+                col,
+                line,
+                curses.color_pair(COLOR_DEFAULT),
+            )
+            row += 1
 
     def render_round_summary(
         self, scores: List[int], player_names: List[str], round_num: int

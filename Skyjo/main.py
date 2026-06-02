@@ -22,7 +22,7 @@ def get_model_path():
         "src",
         "rl",
         "checkpoints",
-        "skyjo_ppo_best.zip",
+        "skyjo_ppo_best-normalized-history.zip",
     )
 
 
@@ -32,18 +32,21 @@ def run_game(stdscr):
     stdscr.keypad(True)
 
     model_path = get_model_path()
+    analyze_mode = _is_analyze_mode()
 
     game = SkyjoGame()
     player1 = RLPlayer(
         player_id=0,
         player_name="RL Player",
         model_path=model_path,
+        explain_moves=analyze_mode,
     )
     player2 = TerminalPlayer(
         player_id=1,
         player_name="You",
         stdscr=stdscr,
         opponent_name="RL Player",
+        analyze_mode=analyze_mode,
     )
     game.add_player(player1)
     game.add_player(player2)
@@ -73,17 +76,23 @@ def run_legacy():
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     model_path = get_model_path()
+    analyze_mode = _is_analyze_mode()
 
     game = SkyjoGame()
     player1 = RLPlayer(
         player_id=0,
         player_name="RL Player",
         model_path=model_path,
+        explain_moves=analyze_mode,
     )
     player2 = HumanPlayer(player_id=1, player_name="Phillip")
     game.add_player(player1)
     game.add_player(player2)
     game.play_game()
+
+
+def _is_analyze_mode():
+    return any(arg in sys.argv for arg in ("--analyze", "--analyse", "--analize"))
 
 
 def main():

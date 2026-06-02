@@ -25,7 +25,7 @@ GRID_ROWS = 3
 GRID_COLS = 4
 CARD_VALUES = list(range(-2, 13))
 
-_INITIAL_CARD_COUNTS = {
+INITIAL_CARD_COUNTS = {
     -2: 5,
     -1: 10,
     0: 15,
@@ -53,8 +53,21 @@ _PHASE_ORDER = [
 ]
 
 
-def _normalize_card_value(value: int) -> float:
+def normalize_card_value(value: float) -> float:
     return (value + 2) / 14.0
+
+
+def expected_card_value(draw_pile_value_counts: Optional[List[int]]) -> float:
+    if draw_pile_value_counts is not None:
+        counts = np.asarray(draw_pile_value_counts, dtype=np.float32)
+        if counts.shape == (len(CARD_VALUES),) and float(counts.sum()) > 0:
+            values = np.asarray(CARD_VALUES, dtype=np.float32)
+            return float(np.dot(values, counts) / counts.sum())
+
+    total_cards = sum(INITIAL_CARD_COUNTS.values())
+    return (
+        sum(value * count for value, count in INITIAL_CARD_COUNTS.items()) / total_cards
+    )
 
 
 def _column_match_counts(grid: Optional[List[List[Card]]]) -> List[float]:
@@ -91,11 +104,11 @@ def _encode_grid(grid: Optional[List[List[Card]]], obs_vec: np.ndarray, offset: 
             if grid is not None and r < len(grid) and c < len(grid[r]):
                 card = grid[r][c]
                 if card is not None and card.face_up:
-                    obs_vec[idx] = _normalize_card_value(card.value)
+                    obs_vec[idx] = normalize_card_value(card.value)
                     obs_vec[idx + 1] = 1.0
             else:
                 # Removed column → encoded as revealed with neutral value 0
-                obs_vec[idx] = _normalize_card_value(0)
+                obs_vec[idx] = normalize_card_value(0)
                 obs_vec[idx + 1] = 1.0
 
 
@@ -114,7 +127,7 @@ def _encode_draw_pile_value_counts(obs: Observation, obs_vec: np.ndarray, offset
     for i, value in enumerate(CARD_VALUES):
         if i >= len(obs.draw_pile_value_counts):
             break
-        initial_count = _INITIAL_CARD_COUNTS[value]
+        initial_count = INITIAL_CARD_COUNTS[value]
         obs_vec[offset + i] = obs.draw_pile_value_counts[i] / float(initial_count)
 
 
@@ -148,12 +161,12 @@ def encode_observation(obs: Observation) -> np.ndarray:
 
     # Discard top (48-49)
     if obs.discard_top is not None:
-        vec[48] = _normalize_card_value(obs.discard_top.value)
+        vec[48] = normalize_card_value(obs.discard_top.value)
         vec[49] = 1.0
 
     # Hand card (50-51)
     if obs.hand_card is not None:
-        vec[50] = _normalize_card_value(obs.hand_card.value)
+        vec[50] = normalize_card_value(obs.hand_card.value)
         vec[51] = 1.0
 
     # Turn phase one-hot (52-56)
