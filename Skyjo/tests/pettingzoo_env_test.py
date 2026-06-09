@@ -1,7 +1,33 @@
-import numpy as np
+from types import SimpleNamespace
 
-from Skyjo.src.rl.pettingzoo_env import SkyjoEnv
+import numpy as np
+import pytest
+
+from Skyjo.src.game_state import ColumnClearStats
+from Skyjo.src.rl.pettingzoo_env import COLUMN_CLEAR_REWARD_DIVISOR, SkyjoEnv
 from Skyjo.src.rl.action_mapping import NUM_ACTIONS
+
+
+class _FakeGreenlet:
+    dead = False
+
+    def switch(self, action):
+        return 0, None, []
+
+
+def _env_with_column_clear_stats(stats: ColumnClearStats) -> SkyjoEnv:
+    env = SkyjoEnv()
+    env.agent_selection = "player_0"
+    env.rewards = {"player_0": 0.0, "player_1": 0.0}
+    env._cumulative_rewards = {"player_0": 0.0, "player_1": 0.0}
+    env.terminations = {"player_0": False, "player_1": False}
+    env.truncations = {"player_0": False, "player_1": False}
+    env._game_greenlet = _FakeGreenlet()
+    env.game = SimpleNamespace(
+        last_column_clear_stats={0: stats},
+        game_state=SimpleNamespace(round_number=1, all_player_final_scores=[]),
+    )
+    return env
 
 
 class TestSkyjoEnvReset:
@@ -108,3 +134,33 @@ class TestSkyjoEnvGameplay:
             env.reset()
             obs = env.observe(env.agent_selection)
             assert obs["action_mask"].sum() > 0
+
+    def test_step_rewards_positive_value_column_clear(self):
+        env = _env_with_column_clear_stats(
+            ColumnClearStats(columns_removed=1, removed_card_value_sum=36)
+        )
+
+        env.step(0)
+
+        expected = 36 / COLUMN_CLEAR_REWARD_DIVISOR
+        assert env._cumulative_rewards["player_0"] == pytest.approx(expected)
+        assert env._cumulative_rewards["player_1"] == pytest.approx(-expected)
+
+    def test_step_penalizes_negative_value_column_clear(self):
+        env = _env_with_column_clear_stats(
+            ColumnClearStats(columns_removed=1, removed_card_value_sum=-6)
+        )
+
+        env.step(0)
+
+        expected = -6 / COLUMN_CLEAR_REWARD_DIVISOR
+        assert env._cumulative_rewards["player_0"] == pytest.approx(expected)
+        assert env._cumulative_rewards["player_1"] == pytest.approx(-expected)
+
+    def test_step_does_not_reward_when_no_column_clears(self):
+        env = _env_with_column_clear_stats(ColumnClearStats())
+
+        env.step(0)
+
+        assert env._cumulative_rewards["player_0"] == pytest.approx(0.0)
+        assert env._cumulative_rewards["player_1"] == pytest.approx(0.0)

@@ -27,6 +27,7 @@ class RLPlayer(Player):
         model: Optional[MaskablePPO] = None,
         explain_moves: bool = False,
         explanation_steps: int = 32,
+        deterministic: bool = True,
     ):
         super().__init__(player_id, player_name)
         if model is not None:
@@ -37,6 +38,7 @@ class RLPlayer(Player):
             raise ValueError("Either model_path or model must be provided")
         self.explain_moves = explain_moves
         self.explanation_steps = explanation_steps
+        self.deterministic = deterministic
         self.last_explanation: Optional[ActionExplanation] = None
 
     def select_action(
@@ -48,7 +50,7 @@ class RLPlayer(Player):
         action_int, _ = self.model.predict(
             obs_vec,
             action_masks=mask,
-            deterministic=True,
+            deterministic=self.deterministic,
         )
         action = int_to_action(int(action_int))
         self.last_explanation = None

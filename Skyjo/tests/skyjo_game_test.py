@@ -91,12 +91,11 @@ def test_get_legal_actions_after_drawing_hidden(two_players):
     legal_actions = game.get_legal_actions(p0)
 
     expected_actions = {
-        Action(ActionType.SWAP_CARD, pos=(r, c))
-        for r in range(3)
-        for c in range(4)
+        Action(ActionType.SWAP_CARD, pos=(r, c)) for r in range(3) for c in range(4)
     }.union({Action(ActionType.DISCARD_CARD)})
 
-    assert set(legal_actions) == expected_actions   
+    assert set(legal_actions) == expected_actions
+
 
 def test_execute_action_draw_hidden_then_swap(two_players, empty_grid):
     game, p0, _ = two_players
@@ -108,7 +107,10 @@ def test_execute_action_draw_hidden_then_swap(two_players, empty_grid):
 
     game.execute_action(p0, Action(ActionType.DRAW_HIDDEN_CARD))
     assert game.game_state.hand_card is draw_card
-    assert game.game_state.phase == TurnPhase.HAVE_DRAWN_HIDDEN or TurnPhase.HAVE_DRAWN_OPEN
+    assert (
+        game.game_state.phase == TurnPhase.HAVE_DRAWN_HIDDEN
+        or TurnPhase.HAVE_DRAWN_OPEN
+    )
 
     game.execute_action(p0, Action(ActionType.SWAP_CARD, pos=(1, 2)))
     assert game.game_state.hand_card is None
@@ -160,3 +162,45 @@ def test_turn_executes_full_plan_and_resets_phase(game):
 
     assert game.game_state.phase == TurnPhase.CHOOSE_DRAW
     assert any(card.face_up for row in p0.player_state.grid for card in row)
+
+
+def test_turn_tracks_total_columns_cleared(game):
+    plan = [
+        Action(ActionType.DRAW_OPEN_CARD),
+        Action(ActionType.SWAP_CARD, pos=(0, 0)),
+    ]
+
+    p0 = TestPlayer(0, "P0", plan=plan)
+    p1 = TestPlayer(1, "P1", plan=[])
+
+    game.add_player(p0)
+    game.add_player(p1)
+
+    p0.player_state.grid = [
+        [
+            Card(11, face_up=False),
+            Card(4, face_up=True),
+            Card(5, face_up=True),
+            Card(6, face_up=True),
+        ],
+        [
+            Card(12, face_up=True),
+            Card(8, face_up=True),
+            Card(9, face_up=True),
+            Card(10, face_up=True),
+        ],
+        [
+            Card(12, face_up=True),
+            Card(0, face_up=True),
+            Card(1, face_up=True),
+            Card(2, face_up=True),
+        ],
+    ]
+    p1.player_state.grid = [[Card(0) for _ in range(4)] for _ in range(3)]
+    game.game_state.discard_pile = [Card(12, face_up=True)]
+    game.game_state.phase = TurnPhase.CHOOSE_DRAW
+
+    game.turn(p0)
+
+    assert game.total_columns_cleared[0] == 1
+    assert game.total_column_clear_value_sum[0] == 36

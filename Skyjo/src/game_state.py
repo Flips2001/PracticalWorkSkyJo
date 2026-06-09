@@ -10,6 +10,12 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class ColumnClearStats:
+    columns_removed: int = 0
+    removed_card_value_sum: int = 0
+
+
 @dataclass
 class GameState:
     round_number: int
@@ -83,14 +89,17 @@ class GameState:
                 return False
         return True
 
-    def remove_unfiorm_columns_to_discard_pile(self, player_state: PlayerState):
+    def remove_uniform_columns_to_discard_pile(
+        self, player_state: PlayerState
+    ) -> ColumnClearStats:
         """
         Remove columns from the player's grid where all cards are the same value and face-up.
         :param player_state: The PlayerState containing the grid to modify.
+        :return: Stats describing the removed columns and their card value sum.
         """
         grid = player_state.get_grid()
         if not grid or not grid[0]:
-            return
+            return ColumnClearStats()
 
         num_cols = len(grid[0])
         num_rows = len(grid)
@@ -98,9 +107,17 @@ class GameState:
         cols_to_remove = [
             col for col in range(num_cols) if self.is_column_uniform(player_state, col)
         ]
+        removed_card_value_sum = 0
         for col in reversed(cols_to_remove):
             for row in range(num_rows):
-                self.discard_pile.append(grid[row].pop(col))
+                removed_card = grid[row].pop(col)
+                removed_card_value_sum += removed_card.value
+                self.discard_pile.append(removed_card)
+
+        return ColumnClearStats(
+            columns_removed=len(cols_to_remove),
+            removed_card_value_sum=removed_card_value_sum,
+        )
 
     def get_new_player_grid(self) -> List[List[Card]]:
         """

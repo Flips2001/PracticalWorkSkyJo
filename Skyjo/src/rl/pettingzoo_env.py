@@ -18,6 +18,8 @@ from Skyjo.src.rl.action_mapping import (
 )
 from Skyjo.src.rl.encoding import encode_observation, get_observation_space
 
+COLUMN_CLEAR_REWARD_DIVISOR = 360.0
+
 
 class ProxyPlayer(Player):
     """A player that yields control back to the env greenlet when an action is needed."""
@@ -149,6 +151,22 @@ class SkyjoEnv(AECEnv):
                 self._last_scores = list(scores)
             self._last_round_number = current_round
 
+    def _check_column_clear_reward(self, agent: str):
+        """Give immediate shaped reward when the acting player clears columns."""
+        if self.game is None:
+            return
+
+        player_id = int(agent.rsplit("_", maxsplit=1)[1])
+        clear_stats = self.game.last_column_clear_stats.get(player_id)
+        if clear_stats is None or clear_stats.columns_removed == 0:
+            return
+
+        reward = clear_stats.removed_card_value_sum / COLUMN_CLEAR_REWARD_DIVISOR
+        self.rewards[agent] += reward
+        for other_agent in self.agents:
+            if other_agent != agent:
+                self.rewards[other_agent] -= reward
+
     def observe(self, agent):
         if self._current_obs is not None and agent == self.agent_selection:
             encoded = encode_observation(self._current_obs)
@@ -171,6 +189,7 @@ class SkyjoEnv(AECEnv):
 
         # Resume the game greenlet with the chosen action
         result = self._game_greenlet.switch(action)
+        self._check_column_clear_reward(agent)
 
         if result is None or self._game_greenlet.dead:
             self._handle_game_over()

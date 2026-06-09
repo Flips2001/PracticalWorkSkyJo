@@ -5,7 +5,7 @@ from collections import Counter
 from Skyjo.src.action import Action
 from Skyjo.src.action_type import ActionType
 from Skyjo.src.card import Card
-from Skyjo.src.game_state import GameState
+from Skyjo.src.game_state import ColumnClearStats, GameState
 from Skyjo.src.observation import Observation
 from Skyjo.src.player_state import PlayerState
 from Skyjo.src.players.player import Player
@@ -17,12 +17,22 @@ logger = logging.getLogger(__name__)
 
 _CARD_VALUES = list(range(-2, 13))
 
+# Safety cap on turns per round. A normal round resolves in well under ~30
+# turns; an immature/greedy policy can stall far longer by recycling the deck
+# (drawing then swapping into already-revealed slots and never finishing). This
+# is only a cheap backstop — evaluation avoids the stall by sampling actions —
+# so it is set well above any legitimate round yet low enough to stay fast.
+MAX_TURNS_PER_ROUND = 300
+
 
 class SkyjoGame:
     def __init__(self):
         self.game_state = GameState()
         self.players: List[Player] = []
         self.num_players = 0
+        self.last_column_clear_stats: dict[int, ColumnClearStats] = {}
+        self.total_columns_cleared: dict[int, int] = {}
+        self.total_column_clear_value_sum: dict[int, int] = {}
 
     def add_player(self, player: Player):
         player.player_state.reset_game()
@@ -292,7 +302,18 @@ class SkyjoGame:
                 observation=observation, legal_actions=legal_actions
             )
             self.execute_action(player, selected_action)
-            self.game_state.remove_unfiorm_columns_to_discard_pile(player.player_state)
+            clear_stats = self.game_state.remove_uniform_columns_to_discard_pile(
+                player.player_state
+            )
+            self.last_column_clear_stats[player.player_id] = clear_stats
+            self.total_columns_cleared[player.player_id] = (
+                self.total_columns_cleared.get(player.player_id, 0)
+                + clear_stats.columns_removed
+            )
+            self.total_column_clear_value_sum[player.player_id] = (
+                self.total_column_clear_value_sum.get(player.player_id, 0)
+                + clear_stats.removed_card_value_sum
+            )
             self._notify_action_selected(player, selected_action)
         self.game_state.phase = TurnPhase.CHOOSE_DRAW
 
@@ -354,12 +375,14 @@ class SkyjoGame:
 
         round_over = False
         num_players = len(self.players)
+        turns_played = 0
 
         while not round_over:
             current_player = self.players[self.game_state.current_player_id]
 
             # Player takes their turn
             self.turn(current_player)
+            turns_played += 1
 
             # Mark player done if in final turn phase
             if (
@@ -378,6 +401,15 @@ class SkyjoGame:
 
             # Check if the round is over
             if self.game_state.is_round_over(self.get_all_player_states()):
+                round_over = True
+            elif turns_played >= MAX_TURNS_PER_ROUND:
+                # Safety valve against non-terminating deterministic play; reset()
+                # below reveals all cards and scores the round as it stands.
+                logger.warning(
+                    "Round %s exceeded %d turns; forcing round end.",
+                    self.game_state.round_number,
+                    MAX_TURNS_PER_ROUND,
+                )
                 round_over = True
 
         # Reveal all cards at end of round

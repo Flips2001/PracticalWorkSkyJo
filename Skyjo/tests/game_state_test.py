@@ -1,5 +1,8 @@
+from pathlib import Path
+
 import pytest
 from Skyjo.src.card import Card
+from Skyjo.src.game_state import ColumnClearStats
 from Skyjo.src.player_state import PlayerState
 
 
@@ -85,6 +88,88 @@ def test_get_all_grids(game_state):
         [[Card(1), Card(2)], [Card(3), Card(4)]],
         [[Card(5), Card(6)], [Card(7), Card(8)]],
     ]
+
+
+def _face_up_grid(values):
+    return [[Card(value, face_up=True) for value in row] for row in values]
+
+
+def test_remove_uniform_columns_to_discard_pile_no_clear(game_state):
+    player_state = PlayerState(player_id=0)
+    player_state.grid = _face_up_grid(
+        [
+            [3, 4, 5, 6],
+            [3, 8, 9, 10],
+            [7, 0, 1, 2],
+        ]
+    )
+
+    stats = game_state.remove_uniform_columns_to_discard_pile(player_state)
+
+    assert stats == ColumnClearStats()
+    assert [len(row) for row in player_state.grid] == [4, 4, 4]
+    assert game_state.discard_pile == []
+
+
+def test_remove_uniform_columns_to_discard_pile_one_clear(game_state):
+    player_state = PlayerState(player_id=0)
+    player_state.grid = _face_up_grid(
+        [
+            [3, 4, 5, 6],
+            [3, 8, 9, 10],
+            [3, 0, 1, 2],
+        ]
+    )
+
+    stats = game_state.remove_uniform_columns_to_discard_pile(player_state)
+
+    assert stats == ColumnClearStats(columns_removed=1, removed_card_value_sum=9)
+    assert [len(row) for row in player_state.grid] == [3, 3, 3]
+    assert [[card.value for card in row] for row in player_state.grid] == [
+        [4, 5, 6],
+        [8, 9, 10],
+        [0, 1, 2],
+    ]
+    assert [card.value for card in game_state.discard_pile] == [3, 3, 3]
+
+
+def test_remove_uniform_columns_to_discard_pile_multiple_clears(game_state):
+    player_state = PlayerState(player_id=0)
+    player_state.grid = _face_up_grid(
+        [
+            [5, 4, 7, 6],
+            [5, 8, 7, 10],
+            [5, 0, 7, 2],
+        ]
+    )
+
+    stats = game_state.remove_uniform_columns_to_discard_pile(player_state)
+
+    assert stats == ColumnClearStats(columns_removed=2, removed_card_value_sum=36)
+    assert [[card.value for card in row] for row in player_state.grid] == [
+        [4, 6],
+        [8, 10],
+        [0, 2],
+    ]
+    assert [card.value for card in game_state.discard_pile] == [7, 7, 7, 5, 5, 5]
+
+
+def test_misspelled_column_removal_api_is_removed(game_state):
+    old_api_name = "remove_" + "un" + "fiorm" + "_columns_to_discard_pile"
+
+    assert not hasattr(game_state, old_api_name)
+
+    package_root = Path(__file__).resolve().parents[1]
+    current_file = Path(__file__).resolve()
+    offenders = []
+    for base_path in (package_root / "src", package_root / "tests"):
+        for path in base_path.rglob("*.py"):
+            if path == current_file:
+                continue
+            if old_api_name in path.read_text():
+                offenders.append(path)
+
+    assert offenders == []
 
 
 def test_get_discard_pile(game_state):
