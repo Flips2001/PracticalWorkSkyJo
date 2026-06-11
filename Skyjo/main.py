@@ -22,7 +22,7 @@ def get_model_path():
         "src",
         "rl",
         "checkpoints",
-        "skyjo_ppo_best-normalized-history.zip",
+        "skyjo_ppo_best.zip",
     )
 
 
