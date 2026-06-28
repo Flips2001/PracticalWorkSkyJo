@@ -119,7 +119,34 @@ def test_expected_card_baseline_uses_remaining_draw_pile_counts():
     assert baseline[49] == pytest.approx(1.0)
     assert baseline[50] == pytest.approx(normalize_card_value(12))
     assert baseline[51] == pytest.approx(1.0)
-    assert baseline[53] == pytest.approx(0.0)
+    # Phase (CHOOSE_DRAW → index 53) is situational, so the baseline mirrors it.
+    assert baseline[53] == pytest.approx(1.0)
+
+
+def test_expected_card_baseline_holds_situation_but_attributes_columns():
+    counts = [0] * len(CARD_VALUES)
+    counts[CARD_VALUES.index(12)] = 10
+    observation = _observation(draw_pile_value_counts=counts)
+    # Two revealed matching cards in column 0 → a nonzero column-match feature.
+    observation.card_grid = [
+        [Card(7, face_up=True), Card(3, face_up=True), Card(0, face_up=False)],
+        [Card(7, face_up=True), Card(4, face_up=True), Card(0, face_up=False)],
+        [Card(0, face_up=False), Card(0, face_up=False), Card(0, face_up=False)],
+    ]
+    observation.scores = [15, 9]
+
+    encoded = encode_observation(observation)
+    baseline = build_expected_card_baseline(observation)
+
+    # Situational features are copied from the observation (delta = 0).
+    for index in range(52, 60):  # phase one-hot, scores, draw-pile size
+        assert baseline[index] == pytest.approx(encoded[index])
+    for index in range(68, OBS_SIZE):  # round-state flags, draw-pile counts
+        assert baseline[index] == pytest.approx(encoded[index])
+
+    # Column-match features stay at the zero baseline so they remain attributable.
+    assert np.all(baseline[60:68] == 0.0)
+    assert np.any(encoded[60:68] > 0.0)
 
 
 def test_expected_card_baseline_falls_back_to_initial_deck_expectation():
@@ -188,8 +215,9 @@ def test_explain_action_returns_ranked_features():
     top_labels = [item.feature.label for item in explanation.top_features]
 
     assert explanation.error is None
-    assert "phase choose draw" in top_labels
-    assert "discard top value" in top_labels
+    # Card features are attributed; the situational phase is fixed in the baseline.
+    assert explanation.top_features[0].feature.label == "discard top value"
+    assert "phase choose draw" not in top_labels
     assert explanation.action == action
     assert explanation.action_index == 1
     assert encode_observation(_observation()).shape == (OBS_SIZE,)

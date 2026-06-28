@@ -186,6 +186,18 @@ def build_feature_metadata() -> List[EncodedFeature]:
 
 FEATURE_METADATA = build_feature_metadata()
 
+# Situational feature groups, held fixed in the baseline so attribution lands on
+# card values. column_matches is excluded on purpose — it is the model's main
+# column-clear signal and should stay attributable
+_CONTEXT_BASELINE_GROUPS = frozenset(
+    {"phase", "score", "draw_pile", "round_state", "draw_pile_counts"}
+)
+_CONTEXT_BASELINE_INDICES = tuple(
+    feature.index
+    for feature in FEATURE_METADATA
+    if feature.group in _CONTEXT_BASELINE_GROUPS
+)
+
 
 def _summary_items(
     cell_attributions: Iterable[CellAttribution],
@@ -220,11 +232,12 @@ def _summary_items(
 
 
 def build_expected_card_baseline(observation: Observation) -> np.ndarray:
-    """Build a neutral baseline that preserves known card structure.
+    """Build a neutral baseline that preserves the situation and card structure.
 
-    Visible card values are replaced by the expected remaining card value.
-    Hidden cards stay hidden, removed columns stay removed, and non-card features
-    use the default zero baseline.
+    Visible card values become the expected remaining card value; hidden cards
+    stay hidden and removed columns stay removed. Situational features are copied from the observation so attribution
+    concentrates on card values, while column-match counts are kept at the zero
+    baseline so they remain attributable.
     """
     baseline = np.zeros(OBS_SIZE, dtype=np.float32)
     expected_value = normalize_card_value(
@@ -242,6 +255,11 @@ def build_expected_card_baseline(observation: Observation) -> np.ndarray:
         if card is not None:
             baseline[value_index] = expected_value
             baseline[present_index] = 1.0
+
+    # Mirror situational features from the observation so they cancel out.
+    encoded = encode_observation(observation)
+    for index in _CONTEXT_BASELINE_INDICES:
+        baseline[index] = encoded[index]
 
     return baseline
 
