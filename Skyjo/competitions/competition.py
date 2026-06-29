@@ -17,7 +17,7 @@ CHECKPOINT_DIR = os.path.join(
 
 
 def resolve_checkpoint(name_or_path: str) -> str:
-    """Resolve a checkpoint name (e.g. 'skyjo_ppo_best') or path to a .zip file."""
+    """Resolve a checkpoint reference"""
     path = name_or_path
     if not (os.path.isabs(path) or os.path.exists(path)):
         path = os.path.join(CHECKPOINT_DIR, path)
@@ -27,51 +27,76 @@ def resolve_checkpoint(name_or_path: str) -> str:
 
 
 def get_model_path() -> str:
+    """Return the resolved path to the default best checkpoint."""
     return resolve_checkpoint("skyjo_ppo_best")
 
 
-def build_opponent(kind: str, player_id: int, mirror_model=None) -> Player:
-    """Build the opponent the RL model competes against.
+def model_display_name(name_or_path: str) -> str:
+    base = os.path.basename(name_or_path)
+    return base[:-4] if base.endswith(".zip") else base
 
-    'phillips' is the hand-written baseline. 'mirror' is a frozen RL snapshot
-    (skyjo_ppo_reference, or any checkpoint passed via --mirror-model); it samples
-    its actions, since two greedy RL policies can otherwise stall a round into the
-    turn cap.
+
+def build_opponent(
+    player_id: int, opponent_model=None, opponent_name="Model"
+) -> Player:
+    """Build the opponent the RL model plays against.
+
+    A model opponent samples its actions, since two greedy RL policies can
+    otherwise stall a round into the turn cap.
+
+    Args:
+        player_id: Seat index for the opponent.
+        opponent_model: A loaded RL model to play as the opponent; if ``None``,
+            the hand-written Phillips baseline is used instead.
+        opponent_name: Display name for a model opponent.
+
+    Returns:
+        The constructed ``Player`` (an ``RLPlayer`` or ``PhillipsPlayer``).
     """
-    if kind == "phillips":
+    if opponent_model is None:
         return PhillipsPlayer(player_id=player_id, player_name="Phillips")
-    if kind == "mirror":
-        return RLPlayer(
-            player_id=player_id,
-            player_name="Mirror",
-            model=mirror_model,
-            deterministic=False,
-        )
-    raise ValueError(f"Unknown opponent: {kind!r}")
+    return RLPlayer(
+        player_id=player_id,
+        player_name=opponent_name,
+        model=opponent_model,
+        deterministic=False,
+    )
 
 
 def play_competition(
     model,
-    opponent_kind,
-    mirror_model=None,
+    opponent_model=None,
+    rl_name="RL",
+    opponent_name=None,
     num_games=NUM_GAMES,
-    alternate_seats=True,
 ):
-    """Play `model` against the chosen opponent and tally per-contestant results.
+    """Play a series of games and tally per-side results.
 
-    Seats are alternated so neither side keeps the first-player advantage. Against
-    the mirror both RL sides sample (matches the training-time mirror eval).
+    Seats alternate each game so neither side keeps the first-player advantage.
+    The RL side samples its actions against a model opponent
+
+    Args:
+        model: The RL model under evaluation.
+        opponent_model: Opponent RL model; if ``None``, plays the Phillips
+            baseline.
+        rl_name: Display name for the RL side.
+        opponent_name: Display name for a model opponent; defaults to ``"Model"``.
+        num_games: Number of games to play.
+
+    Returns:
+        A tuple ``(rl_result, opp_result, ties)`` where each result is a dict
+        with ``name``, ``total`` (summed final score) and ``wins`` keys, and
+        ``ties`` is the number of drawn games.
     """
-    rl_deterministic = opponent_kind != "mirror"
-    rl_name = "RL"
-    opp_name = "Phillips" if opponent_kind == "phillips" else "Mirror"
+    is_model_opponent = opponent_model is not None
+    rl_deterministic = not is_model_opponent
+    opp_name = (opponent_name or "Model") if is_model_opponent else "Phillips"
 
-    totals = {rl_name: 0, opp_name: 0}
-    wins = {rl_name: 0, opp_name: 0}
-    ties = 0
+    rl_total = opp_total = 0
+    rl_wins = opp_wins = ties = 0
 
     for i in tqdm(range(num_games)):
-        rl_seat = (i % 2) if alternate_seats else 0
+        rl_seat = i % 2
         opp_seat = 1 - rl_seat
 
         seats: list = [None, None]
@@ -81,7 +106,7 @@ def play_competition(
             model=model,
             deterministic=rl_deterministic,
         )
-        seats[opp_seat] = build_opponent(opponent_kind, opp_seat, mirror_model)
+        seats[opp_seat] = build_opponent(opp_seat, opponent_model, opp_name)
 
         game = SkyjoGame()
         for player in seats:
@@ -90,66 +115,65 @@ def play_competition(
 
         scores = game.game_state.all_player_final_scores
         rl_score, opp_score = scores[rl_seat], scores[opp_seat]
-        totals[rl_name] += rl_score
-        totals[opp_name] += opp_score
+        rl_total += rl_score
+        opp_total += opp_score
+        # Lower total score wins in Skyjo; equal totals are a draw.
         if rl_score < opp_score:
-            wins[rl_name] += 1
+            rl_wins += 1
         elif opp_score < rl_score:
-            wins[opp_name] += 1
+            opp_wins += 1
         else:
             ties += 1
 
-    return totals, wins, ties, (rl_name, opp_name)
+    return (
+        {"name": rl_name, "total": rl_total, "wins": rl_wins},
+        {"name": opp_name, "total": opp_total, "wins": opp_wins},
+        ties,
+    )
 
 
 def main():
+    """Parse CLI arguments, run the competition, and print the summary."""
     parser = argparse.ArgumentParser(description="Skyjo RL competition")
-    parser.add_argument(
-        "--opponent",
-        choices=["phillips", "mirror"],
-        default="phillips",
-        help="Who the RL model plays against (default: phillips).",
-    )
     parser.add_argument(
         "--model",
         default="skyjo_ppo_best",
         help="Checkpoint name or path for the RL model.",
     )
     parser.add_argument(
-        "--mirror-model",
-        default="skyjo_ppo_reference",
-        help="Checkpoint name or path for the frozen mirror opponent.",
+        "--opponent-model",
+        default=None,
+        help="Checkpoint name or path for the opponent model; "
+        "omit to play against the Phillips baseline.",
     )
     parser.add_argument("--games", type=int, default=NUM_GAMES)
-    parser.add_argument(
-        "--alternate-seats",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Swap who goes first each game to remove first-player bias.",
-    )
     args = parser.parse_args()
 
     model = MaskablePPO.load(resolve_checkpoint(args.model), device=DEVICE)
-    mirror_model = None
-    if args.opponent == "mirror":
-        mirror_model = MaskablePPO.load(
-            resolve_checkpoint(args.mirror_model), device=DEVICE
+    opponent_model = None
+    opponent_name = None
+    if args.opponent_model is not None:
+        opponent_model = MaskablePPO.load(
+            resolve_checkpoint(args.opponent_model), device=DEVICE
         )
+        opponent_name = model_display_name(args.opponent_model)
 
-    totals, wins, ties, (rl_name, opp_name) = play_competition(
+    rl_result, opp_result, ties = play_competition(
         model,
-        args.opponent,
-        mirror_model=mirror_model,
+        opponent_model=opponent_model,
+        rl_name=model_display_name(args.model),
+        opponent_name=opponent_name,
         num_games=args.games,
-        alternate_seats=args.alternate_seats,
     )
 
-    seat_note = "alternating seats" if args.alternate_seats else "fixed seats"
-    print(f"\nAfter {args.games} games (RL vs {opp_name}, {seat_note}):")
-    for name in (rl_name, opp_name):
+    print(
+        f"\nAfter {args.games} games "
+        f"({rl_result['name']} vs {opp_result['name']}, alternating seats):"
+    )
+    for side in (rl_result, opp_result):
         print(
-            f"  {name}: avg score {totals[name] / args.games:.2f}, "
-            f"wins {wins[name]} ({wins[name] / args.games * 100:.1f}%)"
+            f"  {side['name']}: avg score {side['total'] / args.games:.2f}, "
+            f"wins {side['wins']} ({side['wins'] / args.games * 100:.1f}%)"
         )
     print(f"  ties: {ties}")
 
