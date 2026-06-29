@@ -3,7 +3,7 @@
 import math
 import os
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Optional
 
 import torch
 from sb3_contrib import MaskablePPO
@@ -32,9 +32,12 @@ EVAL_EVERY = 1_500_000
 EVAL_GAMES = 100
 NUM_PROCS = 8
 COLUMN_CLEAR_DRILL_ENVS = 1
+DEFAULT_MODEL_PREFIX = "skyjo_ppo"
 
-# Opponent model state (per subprocess)
-_BEST_MODEL_PATH = os.path.join(CHECKPOINT_DIR, "skyjo_ppo_best")
+
+def _best_model_path(model_prefix: str) -> str:
+    """Checkpoint path of the self-play opponent for a given model prefix."""
+    return os.path.join(CHECKPOINT_DIR, f"{model_prefix}_best")
 
 
 def linear_schedule(initial_value: float):
@@ -129,8 +132,8 @@ class Opponent:
 
     Plug new ones into the `opponents` list in `train()` and pick which one
     drives best-model selection via `primary_name`. Set `rl_deterministic=False`
-    to make the RL side sample its actions — required for the frozen mirror,
-    where two greedy equal policies can lock into non-terminating rounds.
+    to make the RL side sample its actions — required for the self-play opponent,
+    where two near-identical greedy policies can lock into non-terminating rounds.
     """
 
     name: str
@@ -146,18 +149,24 @@ def phillips_opponent() -> Opponent:
     )
 
 
-def frozen_mirror_opponent(reference_model) -> Opponent:
-    """A frozen snapshot of the policy; its win rate tracks improvement vs baseline."""
+def selfplay_opponent(model) -> Opponent:
     return Opponent(
-        name="mirror",
+        name="selfplay",
         make_opponent=lambda pid: RLPlayer(
             player_id=pid,
-            player_name="Reference",
-            model=reference_model,
+            player_name="SelfPlay",
+            model=model,
             deterministic=False,
         ),
         rl_deterministic=False,
     )
+
+
+def load_selfplay_opponent(best_model_path) -> Optional[Opponent]:
+    if not os.path.exists(best_model_path + ".zip"):
+        return None
+    model = MaskablePPO.load(best_model_path, device=DEVICE)
+    return selfplay_opponent(model)
 
 
 def evaluate_opponent(model, opponent: Opponent, num_games=EVAL_GAMES) -> dict:
@@ -187,6 +196,8 @@ class TqdmCallback(BaseCallback):
         total_timesteps,
         opponents,
         primary_name,
+        best_model_path,
+        model_prefix,
         eval_every=EVAL_EVERY,
         save_every=SAVE_EVERY,
     ):
@@ -194,6 +205,8 @@ class TqdmCallback(BaseCallback):
         self.total_timesteps = total_timesteps
         self.opponents = opponents
         self.primary_name = primary_name
+        self.best_model_path = best_model_path
+        self.model_prefix = model_prefix
         self.eval_every = eval_every
         self.save_every = save_every
         self.pbar = None
@@ -216,7 +229,7 @@ class TqdmCallback(BaseCallback):
         # Save checkpoint
         if steps - self._last_save >= self.save_every:
             self._last_save = steps
-            path = os.path.join(CHECKPOINT_DIR, f"skyjo_ppo_{steps}")
+            path = os.path.join(CHECKPOINT_DIR, f"{self.model_prefix}_{steps}")
             self.model.save(path)
             self.pbar.write(f"  💾 Checkpoint saved: {steps:,} steps")
 
@@ -227,13 +240,18 @@ class TqdmCallback(BaseCallback):
             results = {
                 opp.name: evaluate_opponent(self.model, opp) for opp in self.opponents
             }
+            # Load the self-play opponent before the NEW BEST save below, so we
+            # compare against the best we just trained against
+            selfplay = load_selfplay_opponent(self.best_model_path)
+            if selfplay is not None:
+                results[selfplay.name] = evaluate_opponent(self.model, selfplay)
             primary = results[self.primary_name]
 
             key = _selection_key(primary)
             marker = ""
             if key > self._best_key:
                 self._best_key = key
-                self.model.save(os.path.join(CHECKPOINT_DIR, "skyjo_ppo_best"))
+                self.model.save(self.best_model_path)
                 marker = " 🏆 NEW BEST"
 
             summary = " | ".join(
@@ -253,17 +271,21 @@ class TqdmCallback(BaseCallback):
         self.pbar.close()
 
 
-def train():
-    self_play_envs = NUM_PROCS - COLUMN_CLEAR_DRILL_ENVS
+def train(
+    model_prefix=DEFAULT_MODEL_PREFIX,
+    column_clear_drill_envs=COLUMN_CLEAR_DRILL_ENVS,
+):
+    best_model_path = _best_model_path(model_prefix)
+    self_play_envs = NUM_PROCS - column_clear_drill_envs
     if self_play_envs <= 0:
-        raise ValueError("NUM_PROCS must be greater than COLUMN_CLEAR_DRILL_ENVS")
+        raise ValueError("NUM_PROCS must be greater than column_clear_drill_envs")
 
     env = SubprocVecEnv(
         [
-            make_env(best_model_path=_BEST_MODEL_PATH, device=DEVICE)
+            make_env(best_model_path=best_model_path, device=DEVICE)
             for _ in range(self_play_envs)
         ]
-        + [make_column_clear_drill_env() for _ in range(COLUMN_CLEAR_DRILL_ENVS)]
+        + [make_column_clear_drill_env() for _ in range(column_clear_drill_envs)]
     )
 
     policy_kwargs = dict(
@@ -289,51 +311,54 @@ def train():
         policy_kwargs=policy_kwargs,
     )
 
-    # Freeze a reference snapshot of the initial policy for the frozen-mirror
-    # eval, so its win rate shows whether the live policy is improving.
-    reference_path = os.path.join(CHECKPOINT_DIR, "skyjo_ppo_reference")
-    model.save(reference_path)
-    reference_model = MaskablePPO.load(reference_path, device=DEVICE)
-
     # Plug the evaluation opponents here. Training itself stays pure self-play;
     # these only measure progress. `primary_name` is the best-model objective.
+    # The self-play opponent (current best) is loaded and evaluated each eval.
     opponents = [
         phillips_opponent(),
-        frozen_mirror_opponent(reference_model),
     ]
     primary_name = "Phillips"
 
     print("🎮 Skyjo RL Training")
+    print(f"   Model prefix: {model_prefix}")
     print(
         f"   Device: {DEVICE} | Envs: {NUM_PROCS} | Steps: {TOTAL_TIMESTEPS/1e6:.0f}M"
     )
     print(f"   OBS_SIZE={OBS_SIZE} | Actions={NUM_ACTIONS}")
     print(
         f"   Eval every {EVAL_EVERY/1e6:.1f}M steps ({EVAL_GAMES} games) vs "
-        f"{', '.join(o.name for o in opponents)}; "
+        f"{', '.join(o.name for o in opponents)} + selfplay (current best); "
         f"best = highest {primary_name} win rate"
     )
     print(f"   Column clear reward divisor: {COLUMN_CLEAR_REWARD_DIVISOR:g}")
     print(
         f"   Envs: {self_play_envs} self-play | "
-        f"{COLUMN_CLEAR_DRILL_ENVS} column-clear drill"
+        f"{column_clear_drill_envs} column-clear drill"
     )
     print("   Self-play opponent: best model, 10% random\n")
 
     callback = TqdmCallback(
-        TOTAL_TIMESTEPS, opponents=opponents, primary_name=primary_name
+        TOTAL_TIMESTEPS,
+        opponents=opponents,
+        primary_name=primary_name,
+        best_model_path=best_model_path,
+        model_prefix=model_prefix,
     )
     model.learn(total_timesteps=TOTAL_TIMESTEPS, callback=callback)
 
-    final_path = os.path.join(CHECKPOINT_DIR, "skyjo_ppo_final")
+    final_path = os.path.join(CHECKPOINT_DIR, f"{model_prefix}_final")
     model.save(final_path)
 
     print(f"\n✅ Training complete. Final model: {final_path}")
     print(f"   Best {primary_name} win rate: {callback._best_key[0]:.0f}%")
 
-    # Final evaluation vs every opponent.
+    # Final evaluation vs every opponent, including the self-play best.
     print("\n📊 Final Evaluation (200 games):")
-    for opp in opponents:
+    final_opponents = list(opponents)
+    selfplay = load_selfplay_opponent(best_model_path)
+    if selfplay is not None:
+        final_opponents.append(selfplay)
+    for opp in final_opponents:
         result = evaluate_opponent(model, opp, num_games=200)
         print(
             f"   vs {opp.name}: Win={result['winrate']:.0f}% | "
@@ -346,4 +371,24 @@ def train():
 
 
 if __name__ == "__main__":
-    train()
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Train a Skyjo RL agent via self-play."
+    )
+    parser.add_argument(
+        "--model-prefix",
+        default=DEFAULT_MODEL_PREFIX,
+        help="Checkpoint name prefix (best/reference/final/steps).",
+    )
+    parser.add_argument(
+        "--drill-envs",
+        type=int,
+        default=COLUMN_CLEAR_DRILL_ENVS,
+        help="Number of column-clear drill envs; 0 disables the drill.",
+    )
+    cli_args = parser.parse_args()
+    train(
+        model_prefix=cli_args.model_prefix,
+        column_clear_drill_envs=cli_args.drill_envs,
+    )
