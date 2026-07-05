@@ -9,22 +9,26 @@ class PhillipsPlayer(Player):
     """
     A Skyjo player that follows a simple strategy:
 
-    - Chooses to draw from the discard pile if the top card has a value of 5 or less; otherwise, draws from the draw pile.
+    - Chooses to draw from the discard pile if the top card has a value of `cutoff` or less; otherwise, draws from the draw pile.
 
     - After drawing, prefers to swap the hand card with the highest value card in the grid if it improves the grid.
 
-    - If the hand card is greater than 5, discard it and flip a random card; otherwise, exchange it with a hidden card in the grid.
+    - If the hand card is greater than `cutoff`, discard it and flip a random card; otherwise, exchange it with a hidden card in the grid.
 
     - If no other strategy applies, select the first legal action available.
     """
 
+    def __init__(self, player_id: int, player_name: str, cutoff: int = 5):
+        super().__init__(player_id, player_name)
+        self.cutoff = cutoff
+
     def select_action(self, observation, legal_actions):
 
         if observation.turn_phase == TurnPhase.CHOOSE_DRAW:
-            # Choose to draw from discard pile if the top card has value 5 or less
+            # Choose to draw from discard pile if the top card has value cutoff or less
             if (
                 observation.discard_top is not None
-                and observation.discard_top.value <= 5
+                and observation.discard_top.value <= self.cutoff
             ):
                 for action in legal_actions:
                     if action.type == ActionType.DRAW_OPEN_CARD:
@@ -61,8 +65,11 @@ class PhillipsPlayer(Player):
                 for action in legal_actions:
                     if action.type == ActionType.SWAP_CARD and action.pos == pos:
                         return action
-            # If the hand card is greater than 5, discard it and flip a random card
-            elif observation.hand_card is not None and observation.hand_card.value > 5:
+            # If the hand card is greater than cutoff, discard it and flip a random card
+            elif (
+                observation.hand_card is not None
+                and observation.hand_card.value > self.cutoff
+            ):
                 for action in legal_actions:
                     if action.type == ActionType.DISCARD_CARD:
                         return action
