@@ -18,7 +18,7 @@ class PhillipsPlayer(Player):
     - If no other strategy applies, select the first legal action available.
     """
 
-    def __init__(self, player_id: int, player_name: str, cutoff: int = 5):
+    def __init__(self, player_id: int, player_name: str, cutoff: int = 2):
         super().__init__(player_id, player_name)
         self.cutoff = cutoff
 
