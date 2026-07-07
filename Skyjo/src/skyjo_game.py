@@ -241,8 +241,9 @@ class SkyjoGame:
                     )
                     break
                 action = player.select_action(observation, legal_actions)
+                snapshots = self._observer_snapshots(player)
                 self.execute_action(player, action)
-                self._notify_action_selected(player, action)
+                self._notify_action_selected(player, action, snapshots)
 
         self.game_state.phase = TurnPhase.CHOOSE_DRAW
 
@@ -301,6 +302,9 @@ class SkyjoGame:
             selected_action = player.select_action(
                 observation=observation, legal_actions=legal_actions
             )
+            # Snapshot the observers' views before executing: the action's
+            # explanation refers to the decision-time state.
+            snapshots = self._observer_snapshots(player)
             self.execute_action(player, selected_action)
             clear_stats = self.game_state.remove_uniform_columns_to_discard_pile(
                 player.player_state
@@ -314,10 +318,19 @@ class SkyjoGame:
                 self.total_column_clear_value_sum.get(player.player_id, 0)
                 + clear_stats.removed_card_value_sum
             )
-            self._notify_action_selected(player, selected_action)
+            self._notify_action_selected(player, selected_action, snapshots)
         self.game_state.phase = TurnPhase.CHOOSE_DRAW
 
-    def _notify_action_selected(self, player: Player, action: Action) -> None:
+    def _observer_snapshots(self, acting_player: Player) -> dict:
+        return {
+            observer.player_id: self.get_observation(observer)
+            for observer in self.players
+            if observer.player_id != acting_player.player_id
+        }
+
+    def _notify_action_selected(
+        self, player: Player, action: Action, snapshots: dict
+    ) -> None:
         explanation = getattr(player, "last_explanation", None)
         for observer in self.players:
             if observer.player_id == player.player_id:
@@ -327,6 +340,7 @@ class SkyjoGame:
                 action,
                 explanation,
                 observation=self.get_observation(observer),
+                snapshot=snapshots.get(observer.player_id),
             )
 
     def reset(self):

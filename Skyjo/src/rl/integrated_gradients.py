@@ -60,8 +60,10 @@ class UnitAttribution:
 
     label: str
     attribution: float
+    group: str  # "cell" | "discard" | "hand" | "score" | "deck"
     owner: Optional[str] = None
     pos: Optional[GridPos] = None
+    card_value: Optional[int] = None  # deck units: which card value
 
     @property
     def abs_attribution(self) -> float:
@@ -85,32 +87,30 @@ class ActionExplanation:
             return None
         return self.target_score - self.baseline_score
 
-    def summary_lines(
-        self, max_features: int = 5, include_action: bool = True
-    ) -> List[str]:
-        if self.error:
-            return [f"Attribution unavailable: {self.error}"]
+    @property
+    def max_abs_attribution(self) -> float:
+        return max((unit.abs_attribution for unit in self.units), default=0.0)
 
-        lines = [f"RL chose: {self.action}"] if include_action else []
-        ranked = sorted(
-            (unit for unit in self.units if unit.abs_attribution > 0),
-            key=lambda unit: unit.abs_attribution,
-            reverse=True,
+    @property
+    def low_influence(self) -> bool:
+        """True when neither the total nor any single unit passes the threshold."""
+        total = self.total_influence
+        return (
+            total is not None
+            and abs(total) < LOW_INFLUENCE_THRESHOLD
+            and self.max_abs_attribution < LOW_INFLUENCE_THRESHOLD
         )
 
-        total = self.total_influence
-        if total is not None:
-            lines.append(f"Card knowledge influence: {total:+.3f}")
-            top = ranked[0].abs_attribution if ranked else 0.0
-            if abs(total) < LOW_INFLUENCE_THRESHOLD and top < LOW_INFLUENCE_THRESHOLD:
-                lines.append("Card knowledge had little influence on this move.")
-                return lines
+    def unit_for(
+        self, group: str, owner: Optional[str] = None
+    ) -> Optional[UnitAttribution]:
+        for unit in self.units:
+            if unit.group == group and (owner is None or unit.owner == owner):
+                return unit
+        return None
 
-        for unit in ranked[:max_features]:
-            direction = "toward" if unit.attribution >= 0 else "against"
-            lines.append(f"{direction} {unit.label}: {unit.attribution:+.3f}")
-
-        return lines
+    def deck_map(self) -> Dict[int, UnitAttribution]:
+        return {unit.card_value: unit for unit in self.units if unit.group == "deck"}
 
     def grid_map(self, owner: str) -> Dict[GridPos, UnitAttribution]:
         return {
@@ -286,41 +286,45 @@ def _build_units(
                         attribution=float(
                             attributions[index] + attributions[index + 1]
                         ),
+                        group="cell",
                         owner=owner,
                         pos=(row, col),
                     )
                 )
 
-    for label_prefix, index, card in (
+    for group, index, card in (
         ("discard", _DISCARD_INDEX, observation.discard_top),
-        ("hand card", _HAND_INDEX, observation.hand_card),
+        ("hand", _HAND_INDEX, observation.hand_card),
     ):
         if card is not None:
             units.append(
                 UnitAttribution(
-                    label=f"{label_prefix} {card.value}",
+                    label=f"{group} {card.value}",
                     attribution=float(attributions[index] + attributions[index + 1]),
+                    group=group,
                 )
             )
 
-    units.append(
-        UnitAttribution(
-            label="your revealed total",
-            attribution=float(attributions[_OWN_SCORE_INDEX]),
+    for owner, label, index in (
+        ("own", "your revealed total", _OWN_SCORE_INDEX),
+        ("opponent", "opponent revealed total", _OPPONENT_SCORE_INDEX),
+    ):
+        units.append(
+            UnitAttribution(
+                label=label,
+                attribution=float(attributions[index]),
+                group="score",
+                owner=owner,
+            )
         )
-    )
-    units.append(
-        UnitAttribution(
-            label="opponent revealed total",
-            attribution=float(attributions[_OPPONENT_SCORE_INDEX]),
-        )
-    )
 
     for offset, value in enumerate(CARD_VALUES):
         units.append(
             UnitAttribution(
                 label=f"remaining {value}s in deck",
                 attribution=float(attributions[_DECK_COUNTS_OFFSET + offset]),
+                group="deck",
+                card_value=value,
             )
         )
 

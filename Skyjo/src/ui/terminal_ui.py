@@ -1,10 +1,18 @@
 """
 Terminal UI renderer for Skyjo using curses.
 Provides a full-screen, color-coded game display with in-place updates.
+
+Attribution display: the live board is always rendered clean. The RL
+opponent's last move is explained in a separate analysis block on the right —
+a frozen copy of the decision-time state (grids, discard, hand, deck counts,
+scores) with a heatmap overlay from green (little influence) to red (much
+influence), normalized to the strongest unit of that move. Snapshot and
+heatmap therefore always describe the same board, even while the live game
+moves on.
 """
 
 import curses
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, List, Optional
 
 from Skyjo.src.card import Card
 from Skyjo.src.observation import Observation
@@ -24,11 +32,24 @@ COLOR_DISCARD = 8  # discard pile
 COLOR_PHASE = 9  # phase info
 COLOR_SCORE = 10  # score display
 
-# Integrated-gradients grid highlight tuning. Keep this selective: the text panel
-# carries the detail, while the grid should only draw attention to clear signals.
-ATTRIBUTION_BACKGROUND_THRESHOLD = 0.90
-ATTRIBUTION_UNDERLINE_THRESHOLD = 0.70
-ATTRIBUTION_MAX_HIGHLIGHTED_CELLS = 5
+# Heatmap pairs occupy HEAT_PAIR_BASE.. with black text on a green→red ramp.
+HEAT_PAIR_BASE = 11
+_HEAT_COLORS_256 = (40, 118, 226, 214, 202, 196)
+_HEAT_COLORS_8 = (curses.COLOR_GREEN, curses.COLOR_YELLOW, curses.COLOR_RED)
+
+# Units below this fraction of the move's strongest unit stay untinted.
+_HEAT_NOISE_FLOOR = 0.05
+
+# Card values in the order of Observation.draw_pile_value_counts.
+_DECK_VALUES = tuple(range(-2, 13))
+
+# Layout: opponent grid offset within a state block, analysis block column.
+_OPPONENT_GRID_OFFSET = 38
+_ANALYSIS_COL = 80
+
+
+def _heat_colors():
+    return _HEAT_COLORS_256 if curses.COLORS >= 256 else _HEAT_COLORS_8
 
 
 def init_colors():
@@ -45,6 +66,61 @@ def init_colors():
     curses.init_pair(COLOR_DISCARD, curses.COLOR_MAGENTA, -1)
     curses.init_pair(COLOR_PHASE, curses.COLOR_CYAN, -1)
     curses.init_pair(COLOR_SCORE, curses.COLOR_YELLOW, -1)
+    for i, color in enumerate(_heat_colors()):
+        curses.init_pair(HEAT_PAIR_BASE + i, curses.COLOR_BLACK, color)
+
+
+def heat_attr(strength: float) -> int:
+    """Background tint for a normalized attribution strength in (0, 1]."""
+    if strength <= 0:
+        return 0
+    levels = len(_heat_colors())
+    level = min(levels - 1, int(strength * levels))
+    return curses.color_pair(HEAT_PAIR_BASE + level)
+
+
+class _Heat:
+    """Attribution tints for one explanation, normalized to its strongest unit.
+
+    The explanation always belongs to the RL opponent, so its "own" units map
+    to the opponent's grid and its "opponent" units to the viewer's grid.
+
+    Tints are suppressed entirely for low-influence moves so a negligible move
+    never shows a saturated heatmap.
+    """
+
+    def __init__(self, explanation: Optional[Any]):
+        if (
+            explanation is None
+            or getattr(explanation, "error", None)
+            or getattr(explanation, "low_influence", False)
+        ):
+            explanation = None
+        self._explanation = explanation
+        self._max = explanation.max_abs_attribution if explanation else 0.0
+        self._cells = {
+            True: explanation.grid_map("opponent") if explanation else {},
+            False: explanation.grid_map("own") if explanation else {},
+        }
+        self._deck = explanation.deck_map() if explanation else {}
+
+    def _tint(self, unit) -> int:
+        if unit is None or self._max <= 0:
+            return 0
+        strength = unit.abs_attribution / self._max
+        return heat_attr(strength) if strength >= _HEAT_NOISE_FLOOR else 0
+
+    def cell(self, viewer_grid: bool, pos) -> int:
+        return self._tint(self._cells[viewer_grid].get(pos))
+
+    def deck(self, card_value: int) -> int:
+        return self._tint(self._deck.get(card_value))
+
+    def unit(self, group: str, viewer: Optional[bool] = None) -> int:
+        if self._explanation is None:
+            return 0
+        owner = None if viewer is None else ("opponent" if viewer else "own")
+        return self._tint(self._explanation.unit_for(group, owner))
 
 
 def get_card_color(card: Card) -> int:
@@ -103,19 +179,13 @@ class TerminalRenderer:
         message: str = "",
         opponent_last_action: str = "",
         opponent_explanation: Optional[Any] = None,
+        opponent_snapshot: Optional[Observation] = None,
         show_actions: bool = True,
         help_text: str = " ↑↓ Navigate  │  Enter Select  │  q Quit ",
     ):
-        """Render the full game state."""
+        """Render the live game state plus the RL move analysis block."""
         self.stdscr.erase()
         max_y, max_x = self.stdscr.getmaxyx()
-        self_grid_attributions = {}
-        opponent_grid_attributions = {}
-        if opponent_explanation is not None and not getattr(
-            opponent_explanation, "error", None
-        ):
-            self_grid_attributions = opponent_explanation.grid_map("opponent")
-            opponent_grid_attributions = opponent_explanation.grid_map("own")
 
         row = 0
         # Title bar
@@ -151,75 +221,24 @@ class TerminalRenderer:
             row += 1
         row += 1
 
-        # Game info bar (discard + hand + draw pile)
-        self._render_game_info(row, observation)
-        row += 2
-
-        # Total game scores
-        if observation.total_scores:
-            total_text = "Total Points:  "
-            self._safe_addstr(row, 2, total_text, curses.color_pair(COLOR_TITLE))
-            col_offset = 2 + len(total_text)
-            self._safe_addstr(
-                row,
-                col_offset,
-                f"You: {observation.total_scores[observation.player_id]}",
-                curses.color_pair(COLOR_SCORE) | curses.A_BOLD,
-            )
-            col_offset += 12
-            for i, score in enumerate(observation.total_scores):
-                if i != observation.player_id:
-                    self._safe_addstr(
-                        row,
-                        col_offset,
-                        f"{opponent_name}: {score}",
-                        curses.color_pair(COLOR_SCORE),
-                    )
-            row += 1
-        row += 1
-
-        # Two grids side by side
-        grid_start_row = row
-        self._render_player_grid(
-            grid_start_row,
-            2,
-            player_name,
-            observation.card_grid,
-            observation.scores[observation.player_id],
-            is_self=True,
-            attributions=self_grid_attributions,
+        state_top = row
+        row = self._render_state(
+            state_top, 2, observation, player_name, opponent_name, heat=None
         )
-
-        # Opponent grid on the right side
-        opponent_col = 40
-        if observation.opponent_cards:
-            for i, opp_grid in enumerate(observation.opponent_cards):
-                if opp_grid is not None:
-                    opp_score = (
-                        observation.scores[i] if i < len(observation.scores) else 0
-                    )
-                    self._render_player_grid(
-                        grid_start_row,
-                        opponent_col,
-                        opponent_name,
-                        opp_grid,
-                        opp_score,
-                        is_self=False,
-                        attributions=opponent_grid_attributions,
-                    )
-                    break
-
-        row = grid_start_row + 10
+        self._render_analysis(
+            state_top,
+            _ANALYSIS_COL,
+            opponent_last_action,
+            opponent_explanation,
+            opponent_snapshot,
+            player_name,
+            opponent_name,
+        )
+        row += 1
 
         # Action selection area
         if show_actions:
             self._render_actions(row, legal_actions, selected_index)
-        self._render_opponent_explanation(
-            row,
-            40,
-            opponent_last_action,
-            opponent_explanation,
-        )
 
         # Status message
         if message:
@@ -241,46 +260,205 @@ class TerminalRenderer:
 
         self.stdscr.refresh()
 
-    def _render_game_info(self, row: int, observation: Observation):
-        """Render discard pile, hand card, and draw pile info."""
-        col = 2
+    def _render_state(
+        self,
+        row: int,
+        col: int,
+        observation: Observation,
+        player_name: str,
+        opponent_name: str,
+        heat: Optional[_Heat],
+    ) -> int:
+        """Render one full game state block; returns the next free row."""
+        heat = heat or _Heat(None)
 
+        self._render_game_info(row, col, observation, heat)
+        row += 2
+
+        self._render_deck_panel(row, col, observation, heat)
+        row += 3
+
+        if observation.total_scores:
+            total_text = "Total Points:  "
+            self._safe_addstr(row, col, total_text, curses.color_pair(COLOR_TITLE))
+            col_offset = col + len(total_text)
+            self._safe_addstr(
+                row,
+                col_offset,
+                f"You: {observation.total_scores[observation.player_id]}",
+                curses.color_pair(COLOR_SCORE) | curses.A_BOLD,
+            )
+            col_offset += 12
+            for i, score in enumerate(observation.total_scores):
+                if i != observation.player_id:
+                    self._safe_addstr(
+                        row,
+                        col_offset,
+                        f"{opponent_name}: {score}",
+                        curses.color_pair(COLOR_SCORE),
+                    )
+            row += 1
+        row += 1
+
+        self._render_player_grid(
+            row,
+            col,
+            player_name,
+            observation.card_grid,
+            observation.scores[observation.player_id],
+            is_self=True,
+            heat=heat,
+        )
+        if observation.opponent_cards:
+            for i, opp_grid in enumerate(observation.opponent_cards):
+                if opp_grid is not None:
+                    opp_score = (
+                        observation.scores[i] if i < len(observation.scores) else 0
+                    )
+                    self._render_player_grid(
+                        row,
+                        col + _OPPONENT_GRID_OFFSET,
+                        opponent_name,
+                        opp_grid,
+                        opp_score,
+                        is_self=False,
+                        heat=heat,
+                    )
+                    break
+
+        return row + 9
+
+    def _render_analysis(
+        self,
+        row: int,
+        col: int,
+        action_text: str,
+        explanation: Optional[Any],
+        snapshot: Optional[Observation],
+        player_name: str,
+        opponent_name: str,
+    ):
+        """Render the RL move analysis: decision-time snapshot with heatmap."""
+        if not action_text and explanation is None:
+            return
+
+        self._safe_addstr(
+            row,
+            col,
+            "Integrated Gradients",
+            curses.color_pair(COLOR_TITLE) | curses.A_BOLD | curses.A_UNDERLINE,
+        )
+        row += 1
+
+        if action_text:
+            self._safe_addstr(
+                row,
+                col,
+                action_text,
+                curses.color_pair(COLOR_PHASE) | curses.A_BOLD,
+            )
+            row += 1
+
+        if explanation is None or snapshot is None:
+            return
+
+        if explanation.error:
+            self._safe_addstr(
+                row,
+                col,
+                f"Attribution unavailable: {explanation.error}",
+                curses.color_pair(COLOR_DEFAULT),
+            )
+            return
+
+        phase_text = PHASE_DESCRIPTIONS.get(
+            snapshot.turn_phase, str(snapshot.turn_phase)
+        )
+        self._safe_addstr(
+            row,
+            col,
+            f"Phase: {phase_text}",
+            curses.color_pair(COLOR_DEFAULT) | curses.A_DIM,
+        )
+        row += 2
+
+        row = self._render_state(
+            row, col, snapshot, player_name, opponent_name, _Heat(explanation)
+        )
+        row += 1
+
+        # Heatmap legend
+        dim = curses.color_pair(COLOR_DEFAULT) | curses.A_DIM
+        self._safe_addstr(row, col, "influence:  low ", dim)
+        x = col + 16
+        for i in range(len(_heat_colors())):
+            self._safe_addstr(row, x, "  ", curses.color_pair(HEAT_PAIR_BASE + i))
+            x += 2
+        self._safe_addstr(row, x + 1, "high", dim)
+
+    def _render_game_info(
+        self, row: int, col: int, observation: Observation, heat: _Heat
+    ):
+        """Render discard pile, hand card, and draw pile info."""
         # Draw pile
         self._safe_addstr(row, col, "Draw Pile: ", curses.color_pair(COLOR_TITLE))
         draw_text = f"[{observation.draw_pile_size} cards]"
         self._safe_addstr(row, col + 11, draw_text, curses.color_pair(COLOR_HIDDEN))
 
         # Discard pile
-        col = 30
-        self._safe_addstr(row, col, "Discard: ", curses.color_pair(COLOR_TITLE))
+        discard_col = col + 28
+        self._safe_addstr(row, discard_col, "Discard: ", curses.color_pair(COLOR_TITLE))
         if observation.discard_top:
-            card_str = format_card(observation.discard_top)
-            color = get_card_color(observation.discard_top)
-            self._safe_addstr(
-                row,
-                col + 9,
-                f"[{card_str.strip()}]",
-                curses.color_pair(color) | curses.A_BOLD,
-            )
+            card_str = f"[{format_card(observation.discard_top).strip()}]"
+            tint = heat.unit("discard")
+            attr = tint or curses.color_pair(get_card_color(observation.discard_top))
+            self._safe_addstr(row, discard_col + 9, card_str, attr | curses.A_BOLD)
         else:
-            self._safe_addstr(row, col + 9, "[empty]", curses.color_pair(COLOR_DEFAULT))
+            self._safe_addstr(
+                row, discard_col + 9, "[empty]", curses.color_pair(COLOR_DEFAULT)
+            )
 
         # Hand card
-        col = 52
-        self._safe_addstr(row, col, "Hand: ", curses.color_pair(COLOR_TITLE))
+        hand_col = col + 50
+        self._safe_addstr(row, hand_col, "Hand: ", curses.color_pair(COLOR_TITLE))
         if observation.hand_card:
-            card_str = format_card(observation.hand_card)
-            color = get_card_color(observation.hand_card)
-            self._safe_addstr(
-                row,
-                col + 6,
-                f"[{card_str.strip()}]",
-                curses.color_pair(color) | curses.A_BOLD,
-            )
+            card_str = f"[{format_card(observation.hand_card).strip()}]"
+            tint = heat.unit("hand")
+            attr = tint or curses.color_pair(get_card_color(observation.hand_card))
+            self._safe_addstr(row, hand_col + 6, card_str, attr | curses.A_BOLD)
         else:
             self._safe_addstr(
-                row, col + 6, "[-]", curses.color_pair(COLOR_DEFAULT) | curses.A_DIM
+                row,
+                hand_col + 6,
+                "[-]",
+                curses.color_pair(COLOR_DEFAULT) | curses.A_DIM,
             )
+
+    def _render_deck_panel(
+        self, row: int, col: int, observation: Observation, heat: _Heat
+    ):
+        """Render remaining draw-pile counts per card value, heat-tinted."""
+        counts = observation.draw_pile_value_counts
+        if not counts:
+            return
+
+        self._safe_addstr(row, col, "Deck:", curses.color_pair(COLOR_TITLE))
+        self._safe_addstr(
+            row + 1, col, "left:", curses.color_pair(COLOR_DEFAULT) | curses.A_DIM
+        )
+        x = col + 6
+        for value, count in zip(_DECK_VALUES, counts):
+            self._safe_addstr(
+                row,
+                x,
+                f"{value:3d}",
+                curses.color_pair(COLOR_DEFAULT) | curses.A_DIM,
+            )
+            tint = heat.deck(value)
+            self._safe_addstr(
+                row + 1, x, f"{count:3d}", tint or curses.color_pair(COLOR_DEFAULT)
+            )
+            x += 4
 
     def _render_player_grid(
         self,
@@ -290,24 +468,10 @@ class TerminalRenderer:
         grid: List[List[Card]],
         score: int,
         is_self: bool,
-        attributions: Optional[Dict[Tuple[int, int], Any]] = None,
+        heat: _Heat,
     ):
         """Render a player's card grid."""
         row = start_row
-        attributions = attributions or {}
-        max_abs_attribution = max(
-            (cell.abs_attribution for cell in attributions.values()),
-            default=0.0,
-        )
-        highlighted_positions = {
-            pos
-            for pos, cell in sorted(
-                attributions.items(),
-                key=lambda item: item[1].abs_attribution,
-                reverse=True,
-            )[:ATTRIBUTION_MAX_HIGHLIGHTED_CELLS]
-            if cell.abs_attribution > 0
-        }
 
         # Player name and score
         header = f"{'▶ ' if is_self else '  '}{name}"
@@ -318,9 +482,10 @@ class TerminalRenderer:
         )
         self._safe_addstr(row, start_col, header, attr)
         score_text = f"Score: {score}"
-        self._safe_addstr(
-            row, start_col + len(header) + 2, score_text, curses.color_pair(COLOR_SCORE)
+        score_attr = heat.unit("score", viewer=is_self) or curses.color_pair(
+            COLOR_SCORE
         )
+        self._safe_addstr(row, start_col + len(header) + 2, score_text, score_attr)
         row += 1
 
         # Column numbers (0-indexed, aligned over card cells)
@@ -352,41 +517,16 @@ class TerminalRenderer:
             col = start_col + len(row_label)
             for c_idx, card in enumerate(card_row):
                 card_str = format_card(card)
-                color = get_card_color(card)
-                attr = curses.color_pair(color) | curses.A_BOLD
-                cell_attr = attributions.get((r_idx, c_idx))
-                if (
-                    cell_attr is not None
-                    and (r_idx, c_idx) in highlighted_positions
-                    and max_abs_attribution > 0
-                ):
-                    strength = cell_attr.abs_attribution / max_abs_attribution
-                    if strength >= ATTRIBUTION_BACKGROUND_THRESHOLD:
-                        attr |= curses.A_REVERSE
-                    elif strength >= ATTRIBUTION_UNDERLINE_THRESHOLD:
-                        attr |= curses.A_UNDERLINE
+                tint = heat.cell(is_self, (r_idx, c_idx))
+                attr = tint or curses.color_pair(get_card_color(card))
+                self._safe_addstr(row, col, card_str, attr | curses.A_BOLD)
                 self._safe_addstr(
                     row,
-                    col,
-                    card_str,
-                    attr,
+                    col + len(card_str),
+                    "│",
+                    curses.color_pair(COLOR_DEFAULT) | curses.A_DIM,
                 )
-                if c_idx < len(card_row) - 1:
-                    self._safe_addstr(
-                        row,
-                        col + len(card_str),
-                        "│",
-                        curses.color_pair(COLOR_DEFAULT) | curses.A_DIM,
-                    )
-                    col += len(card_str) + 1
-                else:
-                    self._safe_addstr(
-                        row,
-                        col + len(card_str),
-                        "│",
-                        curses.color_pair(COLOR_DEFAULT) | curses.A_DIM,
-                    )
-                    col += len(card_str) + 1
+                col += len(card_str) + 1
             row += 1
 
             # Row separator
@@ -425,49 +565,6 @@ class TerminalRenderer:
                 attr = curses.color_pair(COLOR_DEFAULT)
 
             self._safe_addstr(row + i, 2, action_text, attr)
-
-    def _render_opponent_explanation(
-        self,
-        row: int,
-        col: int,
-        opponent_last_action: str,
-        opponent_explanation: Optional[Any],
-    ):
-        """Render the latest RL attribution summary."""
-        if not opponent_last_action and opponent_explanation is None:
-            return
-
-        self._safe_addstr(
-            row,
-            col,
-            "Integrated Gradients",
-            curses.color_pair(COLOR_TITLE) | curses.A_BOLD | curses.A_UNDERLINE,
-        )
-        row += 1
-
-        if opponent_last_action:
-            self._safe_addstr(
-                row,
-                col,
-                opponent_last_action,
-                curses.color_pair(COLOR_PHASE) | curses.A_BOLD,
-            )
-            row += 1
-
-        if opponent_explanation is None:
-            return
-
-        for line in opponent_explanation.summary_lines(
-            max_features=5,
-            include_action=not bool(opponent_last_action),
-        ):
-            self._safe_addstr(
-                row,
-                col,
-                line,
-                curses.color_pair(COLOR_DEFAULT),
-            )
-            row += 1
 
     def render_round_summary(
         self, scores: List[int], player_names: List[str], round_num: int

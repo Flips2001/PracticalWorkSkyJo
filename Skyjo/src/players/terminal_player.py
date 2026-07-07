@@ -31,6 +31,7 @@ class TerminalPlayer(Player):
         self._message = ""
         self._opponent_last_action = ""
         self._opponent_explanation = None
+        self._opponent_snapshot = None
 
     def select_action(
         self, observation: Observation, legal_actions: List[Action]
@@ -59,6 +60,9 @@ class TerminalPlayer(Player):
                 ),
                 opponent_explanation=(
                     self._opponent_explanation if self.analyze_mode else None
+                ),
+                opponent_snapshot=(
+                    self._opponent_snapshot if self.analyze_mode else None
                 ),
             )
 
@@ -92,14 +96,18 @@ class TerminalPlayer(Player):
         action: Action,
         explanation: Any = None,
         observation: Optional[Observation] = None,
+        snapshot: Optional[Observation] = None,
     ) -> None:
         if acting_player.player_id == self.player_id:
             return
         if not self.analyze_mode:
             return
 
+        # The snapshot freezes the decision-time state the explanation refers
+        # to and stays on screen while the live board moves on.
         self._opponent_last_action = f"{acting_player.player_name}: {action}"
         self._opponent_explanation = explanation
+        self._opponent_snapshot = snapshot
         if observation is not None:
             self._show_analysis_pause(observation)
 
@@ -114,6 +122,7 @@ class TerminalPlayer(Player):
                 message="Analyze mode: press Enter to continue.",
                 opponent_last_action=self._opponent_last_action,
                 opponent_explanation=self._opponent_explanation,
+                opponent_snapshot=self._opponent_snapshot,
                 show_actions=False,
                 help_text=" Enter Continue  │  q Quit ",
             )

@@ -184,6 +184,26 @@ def test_explain_action_attributes_card_units_not_context():
     assert "remaining -2s in deck" in by_label
 
 
+def test_explanation_lookup_helpers_for_ui():
+    model = DummyModel()
+    action = Action(ActionType.DRAW_OPEN_CARD)
+    observation = _observation()
+    observation.card_grid[0][0] = Card(12, face_up=True)
+
+    explanation = explain_action(
+        model,
+        observation,
+        action,
+        [Action(ActionType.DRAW_HIDDEN_CARD), action],
+    )
+
+    assert explanation.max_abs_attribution > 0
+    assert explanation.unit_for("discard").label == "discard 5"
+    assert explanation.unit_for("hand") is None
+    assert explanation.unit_for("score", "own").label == "your revealed total"
+    assert set(explanation.deck_map()) == set(CARD_VALUES)
+
+
 def test_grid_map_covers_all_cells_for_colouring():
     model = DummyModel()
     action = Action(ActionType.DRAW_OPEN_CARD)
@@ -203,43 +223,18 @@ def test_grid_map_covers_all_cells_for_colouring():
     assert len(explanation.grid_map("opponent")) == 12
 
 
-def test_summary_lines_speak_in_card_language():
+def test_low_influence_flags_zero_knowledge_moves():
     model = DummyModel()
     action = Action(ActionType.DRAW_OPEN_CARD)
+    legal_actions = [Action(ActionType.DRAW_HIDDEN_CARD), action]
     observation = _observation()
     observation.card_grid[0][0] = Card(12, face_up=True)
 
-    explanation = explain_action(
-        model,
-        observation,
-        action,
-        [Action(ActionType.DRAW_HIDDEN_CARD), action],
-    )
-    lines = explanation.summary_lines(max_features=3, include_action=False)
+    influenced = explain_action(model, observation, action, legal_actions)
+    assert influenced.low_influence is False
 
-    assert any("Card knowledge influence:" in line for line in lines)
-    assert any("your 12 at R0C0" in line for line in lines)
-    assert any("discard 5" in line for line in lines)
-    assert all(
-        line.startswith(("toward ", "against ", "Card knowledge")) for line in lines
-    )
-
-
-def test_summary_lines_report_low_influence_moves():
-    model = DummyModel()
     with torch.no_grad():
         model.policy.linear.weight.zero_()
-    action = Action(ActionType.DRAW_OPEN_CARD)
-
-    explanation = explain_action(
-        model,
-        _observation(),
-        action,
-        [Action(ActionType.DRAW_HIDDEN_CARD), action],
-    )
-    lines = explanation.summary_lines(include_action=False)
-
-    assert lines == [
-        "Card knowledge influence: +0.000",
-        "Card knowledge had little influence on this move.",
-    ]
+    uninfluenced = explain_action(model, _observation(), action, legal_actions)
+    assert uninfluenced.low_influence is True
+    assert uninfluenced.total_influence == pytest.approx(0.0)

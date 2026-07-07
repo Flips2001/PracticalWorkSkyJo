@@ -36,8 +36,13 @@ class Player(ABC):
         action: Action,
         explanation: Any = None,
         observation: Optional[Observation] = None,
+        snapshot: Optional[Observation] = None,
     ) -> None:
-        """Receive optional notification after another player selects an action."""
+        """Receive optional notification after another player's action.
+
+        `observation` is the observer's current (post-action) view; `snapshot`
+        is their view at decision time, matching the action's explanation.
+        """
         return None
 
     def __str__(self):
