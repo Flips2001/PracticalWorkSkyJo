@@ -322,8 +322,10 @@ class SkyjoGame:
         self.game_state.phase = TurnPhase.CHOOSE_DRAW
 
     def _observer_snapshots(self, acting_player: Player) -> dict:
+        # Deep copy: observations alias live state (e.g. the acting player's
+        # grid), and snapshots must stay frozen at decision time.
         return {
-            observer.player_id: self.get_observation(observer)
+            observer.player_id: copy.deepcopy(self.get_observation(observer))
             for observer in self.players
             if observer.player_id != acting_player.player_id
         }

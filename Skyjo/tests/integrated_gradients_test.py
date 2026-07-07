@@ -11,6 +11,7 @@ from Skyjo.src.rl.encoding import (
     CARD_VALUES,
     OBS_SIZE,
     encode_observation,
+    expected_card_value,
     normalize_card_value,
 )
 from Skyjo.src.rl.integrated_gradients import (
@@ -94,14 +95,31 @@ def test_blindfold_baseline_erases_card_knowledge():
     observation.scores = [15, 9]
 
     baseline = build_blindfold_baseline(observation)
+    expected = normalize_card_value(
+        expected_card_value(observation.draw_pile_value_counts)
+    )
 
-    # Grids hidden, discard and hand absent, revealed totals zero.
+    # Grids hidden, revealed totals zero.
     assert baseline[:48] == pytest.approx(np.zeros(48))
-    assert baseline[48:52] == pytest.approx(np.zeros(4))
     assert baseline[57] == pytest.approx(0.0)
     assert baseline[58] == pytest.approx(0.0)
+    # Discard and hand exist publicly: presence kept, value erased to the
+    # expected remaining-deck card.
+    assert baseline[48] == pytest.approx(expected)
+    assert baseline[49] == pytest.approx(1.0)
+    assert baseline[50] == pytest.approx(expected)
+    assert baseline[51] == pytest.approx(1.0)
     # Deck counts revert to the full deck: nothing seen yet.
     assert baseline[62:] == pytest.approx(np.ones(len(CARD_VALUES)))
+
+
+def test_blindfold_baseline_keeps_absent_hand_absent():
+    observation = _observation()  # no hand card
+
+    baseline = build_blindfold_baseline(observation)
+
+    assert baseline[50] == pytest.approx(0.0)
+    assert baseline[51] == pytest.approx(0.0)
 
 
 def test_blindfold_baseline_keeps_public_context():
@@ -159,6 +177,8 @@ def test_explain_action_attributes_card_units_not_context():
     action = Action(ActionType.DRAW_OPEN_CARD)
     observation = _observation()
     observation.card_grid[0][0] = Card(12, face_up=True)
+    # Well above the expected-value baseline so the discard delta is positive.
+    observation.discard_top = Card(12, face_up=True)
 
     explanation = explain_action(
         model,
@@ -175,7 +195,7 @@ def test_explain_action_attributes_card_units_not_context():
     by_label = {unit.label: unit for unit in explanation.units}
     # Weighted card inputs (own R0C0 value, discard value) carry attribution.
     assert by_label["your 12 at R0C0"].attribution > 0
-    assert by_label["discard 5"].attribution > 0
+    assert by_label["discard 12"].attribution > 0
     # The phase weight is public context and produces no unit at all.
     assert not any("phase" in label for label in by_label)
     # Hidden cards have zero delta and therefore exactly zero attribution.
@@ -223,18 +243,18 @@ def test_grid_map_covers_all_cells_for_colouring():
     assert len(explanation.grid_map("opponent")) == 12
 
 
-def test_low_influence_flags_zero_knowledge_moves():
+def test_total_influence_is_zero_for_a_card_blind_policy():
     model = DummyModel()
-    action = Action(ActionType.DRAW_OPEN_CARD)
-    legal_actions = [Action(ActionType.DRAW_HIDDEN_CARD), action]
-    observation = _observation()
-    observation.card_grid[0][0] = Card(12, face_up=True)
-
-    influenced = explain_action(model, observation, action, legal_actions)
-    assert influenced.low_influence is False
-
     with torch.no_grad():
         model.policy.linear.weight.zero_()
-    uninfluenced = explain_action(model, _observation(), action, legal_actions)
-    assert uninfluenced.low_influence is True
-    assert uninfluenced.total_influence == pytest.approx(0.0)
+    action = Action(ActionType.DRAW_OPEN_CARD)
+
+    explanation = explain_action(
+        model,
+        _observation(),
+        action,
+        [Action(ActionType.DRAW_HIDDEN_CARD), action],
+    )
+
+    assert explanation.total_influence == pytest.approx(0.0)
+    assert explanation.max_abs_attribution == pytest.approx(0.0)

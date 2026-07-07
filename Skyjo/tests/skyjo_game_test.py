@@ -204,3 +204,18 @@ def test_turn_tracks_total_columns_cleared(game):
 
     assert game.total_columns_cleared[0] == 1
     assert game.total_column_clear_value_sum[0] == 36
+
+
+def test_observer_snapshots_are_frozen_at_decision_time(two_players):
+    game, p0, p1 = two_players
+    p0.player_state.grid = grid_from_values(
+        [[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12]]
+    )
+
+    snapshot = game._observer_snapshots(p0)[p1.player_id]
+
+    # The acting player's grid mutates after the snapshot was taken; the
+    # snapshot's view of it must not change with it.
+    p0.player_state.grid[0][0].reveal()
+
+    assert snapshot.opponent_cards[p0.player_id][0][0].face_up is False

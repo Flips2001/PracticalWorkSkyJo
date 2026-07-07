@@ -56,6 +56,19 @@ def normalize_card_value(value: float) -> float:
     return (value + 2) / 14.0
 
 
+def expected_card_value(draw_pile_value_counts: Optional[List[int]]) -> float:
+    if draw_pile_value_counts is not None:
+        counts = np.asarray(draw_pile_value_counts, dtype=np.float32)
+        if counts.shape == (len(CARD_VALUES),) and float(counts.sum()) > 0:
+            values = np.asarray(CARD_VALUES, dtype=np.float32)
+            return float(np.dot(values, counts) / counts.sum())
+
+    total_cards = sum(INITIAL_CARD_COUNTS.values())
+    return (
+        sum(value * count for value, count in INITIAL_CARD_COUNTS.items()) / total_cards
+    )
+
+
 def _encode_grid(grid: Optional[List[List[Card]]], obs_vec: np.ndarray, offset: int):
     """Encode a 3×4 grid into obs_vec starting at offset.
     Per slot: (normalized_value, is_revealed).

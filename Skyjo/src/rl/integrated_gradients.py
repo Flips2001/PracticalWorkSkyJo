@@ -1,12 +1,19 @@
 """Integrated-gradients explanations for RL moves.
 
 The baseline is the same public situation with all card knowledge erased:
-cards hidden, discard/hand absent, deck counts at "nothing seen", revealed
-totals zero. Phase, draw-pile size, round flags and removed columns are
-public regardless of card knowledge, so they are copied from the observation
-and cancel. Attributions therefore answer: how much did each piece of card
-knowledge push the policy toward the chosen move, relative to an agent in
-the identical situation that cannot see any cards.
+cards hidden, deck counts at "nothing seen", revealed totals zero. Phase,
+draw-pile size, round flags and removed columns are public regardless of
+card knowledge, so they are copied from the observation and cancel.
+Attributions therefore answer: how much did each piece of card knowledge
+push the policy toward the chosen move, relative to an agent in the
+identical situation that cannot see any cards.
+
+Discard and hand cards are the exception: their *existence* is public (the
+phase implies it) and the encoding has no "present but unknown" state for
+them, so erasing them to absent would put the baseline on impossible states
+the policy never trained on and inflate their attributions. When present,
+they are instead erased to the expected value of the remaining deck —
+"an unremarkable card is there".
 
 Value and revealed-flag features are summed per card: normalize(-2) == 0.0,
 so against the hidden baseline the split between the two channels is an
@@ -30,6 +37,7 @@ from Skyjo.src.rl.encoding import (
     GRID_ROWS,
     OBS_SIZE,
     encode_observation,
+    expected_card_value,
     normalize_card_value,
 )
 
@@ -48,10 +56,6 @@ _DECK_COUNTS_OFFSET = 62
 # Public context regardless of card knowledge: phase one-hot, draw-pile size,
 # final-turn and first-finisher flags.
 _PUBLIC_CONTEXT_INDICES = tuple(range(52, 57)) + (59, 60, 61)
-
-# Below this log-prob delta vs the blindfold baseline (and top unit magnitude),
-# card knowledge did not drive the move and ranked influences would be noise.
-LOW_INFLUENCE_THRESHOLD = 0.25
 
 
 @dataclass(frozen=True)
@@ -91,16 +95,6 @@ class ActionExplanation:
     def max_abs_attribution(self) -> float:
         return max((unit.abs_attribution for unit in self.units), default=0.0)
 
-    @property
-    def low_influence(self) -> bool:
-        """True when neither the total nor any single unit passes the threshold."""
-        total = self.total_influence
-        return (
-            total is not None
-            and abs(total) < LOW_INFLUENCE_THRESHOLD
-            and self.max_abs_attribution < LOW_INFLUENCE_THRESHOLD
-        )
-
     def unit_for(
         self, group: str, owner: Optional[str] = None
     ) -> Optional[UnitAttribution]:
@@ -121,9 +115,24 @@ class ActionExplanation:
 
 
 def build_blindfold_baseline(observation: Observation) -> np.ndarray:
-    """Erase all card knowledge, keep the public situation."""
+    """Erase all card knowledge, keep the public situation.
+
+    Present discard/hand cards keep their presence flag (public structure)
+    and get the expected remaining-deck value; see the module docstring.
+    """
     baseline = np.zeros(OBS_SIZE, dtype=np.float32)
     baseline[_DECK_COUNTS_OFFSET:] = 1.0  # full deck: nothing seen yet
+
+    expected = normalize_card_value(
+        expected_card_value(observation.draw_pile_value_counts)
+    )
+    for index, card in (
+        (_DISCARD_INDEX, observation.discard_top),
+        (_HAND_INDEX, observation.hand_card),
+    ):
+        if card is not None:
+            baseline[index] = expected
+            baseline[index + 1] = 1.0
 
     encoded = encode_observation(observation)
     for index in _PUBLIC_CONTEXT_INDICES:

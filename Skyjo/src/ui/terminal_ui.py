@@ -37,9 +37,6 @@ HEAT_PAIR_BASE = 11
 _HEAT_COLORS_256 = (40, 118, 226, 214, 202, 196)
 _HEAT_COLORS_8 = (curses.COLOR_GREEN, curses.COLOR_YELLOW, curses.COLOR_RED)
 
-# Units below this fraction of the move's strongest unit stay untinted.
-_HEAT_NOISE_FLOOR = 0.05
-
 # Card values in the order of Observation.draw_pile_value_counts.
 _DECK_VALUES = tuple(range(-2, 13))
 
@@ -84,17 +81,10 @@ class _Heat:
 
     The explanation always belongs to the RL opponent, so its "own" units map
     to the opponent's grid and its "opponent" units to the viewer's grid.
-
-    Tints are suppressed entirely for low-influence moves so a negligible move
-    never shows a saturated heatmap.
     """
 
     def __init__(self, explanation: Optional[Any]):
-        if (
-            explanation is None
-            or getattr(explanation, "error", None)
-            or getattr(explanation, "low_influence", False)
-        ):
+        if explanation is None or getattr(explanation, "error", None):
             explanation = None
         self._explanation = explanation
         self._max = explanation.max_abs_attribution if explanation else 0.0
@@ -107,8 +97,7 @@ class _Heat:
     def _tint(self, unit) -> int:
         if unit is None or self._max <= 0:
             return 0
-        strength = unit.abs_attribution / self._max
-        return heat_attr(strength) if strength >= _HEAT_NOISE_FLOOR else 0
+        return heat_attr(unit.abs_attribution / self._max)
 
     def cell(self, viewer_grid: bool, pos) -> int:
         return self._tint(self._cells[viewer_grid].get(pos))

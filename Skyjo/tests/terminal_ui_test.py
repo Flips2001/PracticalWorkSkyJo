@@ -155,16 +155,19 @@ def test_render_game_without_explanation_has_no_analysis_block():
     assert _attrs_of(calls, "  3 ") == [_pair(2) | curses.A_BOLD]
 
 
-def test_units_below_noise_floor_are_not_tinted():
+def test_faint_units_get_the_lowest_tint():
     calls = _render(_explanation(), snapshot=_observation(top_left_value=12))
 
-    # 0.01/0.9 is under the noise floor: hidden cards keep their base color.
-    assert all(attr == _pair(5) | curses.A_BOLD for attr in _attrs_of(calls, " ?? "))
+    attrs = _attrs_of(calls, " ?? ")
+    # 0.01/0.9 lands in the lowest bucket: the faint unit is tinted green.
+    assert _pair(HEAT_PAIR_BASE) | curses.A_BOLD in attrs
+    # Cells without any unit keep their base color.
+    assert _pair(5) | curses.A_BOLD in attrs
 
 
-def test_low_influence_move_has_no_heat():
-    # All attributions scaled below the threshold: everything stays untinted.
-    calls = _render(_explanation(scale=0.1), snapshot=_observation(top_left_value=12))
+def test_tints_are_relative_to_each_move():
+    # A move with uniformly tiny attributions shows the same relative tints
+    # as a strong one: the heatmap always ranks within the move.
+    calls = _render(_explanation(scale=0.01), snapshot=_observation(top_left_value=12))
 
-    assert _attrs_of(calls, " 12 ") == [_pair(4) | curses.A_BOLD]
-    assert all(attr == _pair(3) | curses.A_BOLD for attr in _attrs_of(calls, "[5]"))
+    assert _attrs_of(calls, " 12 ") == [_pair(HEAT_PAIR_BASE + 5) | curses.A_BOLD]
