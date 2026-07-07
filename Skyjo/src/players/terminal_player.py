@@ -21,13 +21,12 @@ class TerminalPlayer(Player):
         player_name: str,
         stdscr,
         opponent_name: str = "Opponent",
-        analyze_mode: bool = False,
     ):
         super().__init__(player_id, player_name)
         self.stdscr = stdscr
         self.renderer = TerminalRenderer(stdscr)
         self.opponent_name = opponent_name
-        self.analyze_mode = analyze_mode
+        self.analyze_mode = False  # toggled in-game with 'a'
         self._message = ""
         self._opponent_last_action = ""
         self._opponent_explanation = None
@@ -64,6 +63,7 @@ class TerminalPlayer(Player):
                 opponent_snapshot=(
                     self._opponent_snapshot if self.analyze_mode else None
                 ),
+                help_text=self._help_text(),
             )
 
             # Get user input
@@ -85,10 +85,19 @@ class TerminalPlayer(Player):
                 # Enter key - confirm selection
                 self._message = ""
                 return legal_actions[selected_index]
+            elif key in (ord("a"), ord("A")):
+                self.analyze_mode = not self.analyze_mode
+                self._message = (
+                    f"Analyze mode {'enabled' if self.analyze_mode else 'disabled'}."
+                )
             elif key == ord("q") or key == ord("Q"):
                 raise KeyboardInterrupt("Player quit the game")
             else:
                 self._message = ""
+
+    def _help_text(self) -> str:
+        analyze = "ON" if self.analyze_mode else "OFF"
+        return f" ↑↓ Navigate  │  Enter Select  │  a Analyze: {analyze}  │  q Quit "
 
     def observe_action(
         self,
@@ -100,15 +109,15 @@ class TerminalPlayer(Player):
     ) -> None:
         if acting_player.player_id == self.player_id:
             return
-        if not self.analyze_mode:
-            return
 
-        # The snapshot freezes the decision-time state the explanation refers
-        # to and stays on screen while the live board moves on.
+        # Always store: toggling analyze mode on then shows the latest RL
+        # move immediately. The snapshot freezes the decision-time state the
+        # explanation refers to and stays on screen while the live board
+        # moves on.
         self._opponent_last_action = f"{acting_player.player_name}: {action}"
         self._opponent_explanation = explanation
         self._opponent_snapshot = snapshot
-        if observation is not None:
+        if self.analyze_mode and observation is not None:
             self._show_analysis_pause(observation)
 
     def _show_analysis_pause(self, observation: Observation) -> None:
@@ -124,10 +133,13 @@ class TerminalPlayer(Player):
                 opponent_explanation=self._opponent_explanation,
                 opponent_snapshot=self._opponent_snapshot,
                 show_actions=False,
-                help_text=" Enter Continue  │  q Quit ",
+                help_text=" Enter Continue  │  a Analyze: ON  │  q Quit ",
             )
             key = self.stdscr.getch()
             if key in (curses.KEY_ENTER, 10, 13):
+                return
+            if key in (ord("a"), ord("A")):
+                self.analyze_mode = False
                 return
             if key == ord("q") or key == ord("Q"):
                 raise KeyboardInterrupt("Player quit the game")

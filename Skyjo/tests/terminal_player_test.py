@@ -135,3 +135,33 @@ def test_terminal_player_wraps_selection(
         result = terminal_player.select_action(mock_observation, legal_actions)
 
     assert result == legal_actions[1]
+
+
+def test_a_key_toggles_analyze_mode(terminal_player, mock_stdscr, mock_observation):
+    legal_actions = [Action(ActionType.DRAW_HIDDEN_CARD)]
+    mock_stdscr.getch.side_effect = [ord("a"), ord("a"), ord("a"), 10]
+
+    assert terminal_player.analyze_mode is False
+    with patch.object(terminal_player.renderer, "render_game"):
+        terminal_player.select_action(mock_observation, legal_actions)
+
+    assert terminal_player.analyze_mode is True
+
+
+def test_observe_action_stores_analysis_even_when_analyze_is_off(terminal_player):
+    acting = MagicMock()
+    acting.player_id = 1
+    acting.player_name = "RL"
+    action = Action(ActionType.DRAW_HIDDEN_CARD)
+
+    # analyze_mode off: no pause must be shown, but the analysis is stored so
+    # toggling on immediately shows the latest RL move.
+    with patch.object(terminal_player.renderer, "render_game") as render:
+        terminal_player.observe_action(
+            acting, action, explanation="exp", observation=MagicMock(), snapshot="snap"
+        )
+
+    render.assert_not_called()
+    assert terminal_player._opponent_explanation == "exp"
+    assert terminal_player._opponent_snapshot == "snap"
+    assert terminal_player._opponent_last_action == f"RL: {action}"
