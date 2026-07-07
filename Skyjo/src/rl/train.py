@@ -24,7 +24,7 @@ DEVICE = "cpu"
 CHECKPOINT_DIR = os.path.join(os.path.dirname(__file__), "checkpoints")
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 
-TOTAL_TIMESTEPS = 40_000_000
+TOTAL_TIMESTEPS = 120_000_000
 NUM_CHECKPOINTS = 10
 NUM_EVALS = 20
 SAVE_EVERY = 3_000_000
@@ -335,7 +335,7 @@ def train(
         f"   Envs: {self_play_envs} self-play | "
         f"{column_clear_drill_envs} column-clear drill"
     )
-    print("   Self-play opponent: best model, 10% random\n")
+    print("   Self-play opponent: best model, every 10th move random\n")
 
     callback = TqdmCallback(
         TOTAL_TIMESTEPS,

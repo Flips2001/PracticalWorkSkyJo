@@ -9,7 +9,6 @@ from Skyjo.src.rl.encoding import (
     encode_observation,
     get_observation_space,
     normalize_card_value,
-    _column_match_counts,
 )
 
 
@@ -51,28 +50,6 @@ class TestNormalizeCardValue:
 
     def test_zero(self):
         assert normalize_card_value(0) == pytest.approx(2.0 / 14.0)
-
-
-class TestColumnMatchCounts:
-    def test_none_grid(self):
-        counts = _column_match_counts(None)
-        assert counts == [0.0, 0.0, 0.0, 0.0]
-
-    def test_all_hidden(self):
-        grid = _make_grid([0] * 12, face_up=False)
-        counts = _column_match_counts(grid)
-        assert counts == [0.0, 0.0, 0.0, 0.0]
-
-    def test_column_with_matching_values(self):
-        grid = _make_grid([5, 0, 0, 0, 5, 0, 0, 0, 5, 0, 0, 0], face_up=True)
-        counts = _column_match_counts(grid)
-        assert counts[0] == pytest.approx(1.0)  # 3x value 5 → 3/3
-        assert counts[1] == pytest.approx(1.0)  # 3x value 0 → 3/3
-
-    def test_column_with_partial_match(self):
-        grid = _make_grid([5, 0, 0, 0, 5, 0, 0, 0, 3, 0, 0, 0], face_up=True)
-        counts = _column_match_counts(grid)
-        assert counts[0] == pytest.approx(2.0 / 3.0)  # two 5s out of 3
 
 
 class TestEncodeObservation:
@@ -155,27 +132,27 @@ class TestEncodeObservation:
     def test_final_turn_flag(self):
         obs = _make_obs(final_turn_phase=True)
         vec = encode_observation(obs)
-        assert vec[68] == pytest.approx(1.0)
+        assert vec[60] == pytest.approx(1.0)
 
     def test_not_final_turn(self):
         obs = _make_obs(final_turn_phase=False)
         vec = encode_observation(obs)
-        assert vec[68] == pytest.approx(0.0)
+        assert vec[60] == pytest.approx(0.0)
 
     def test_first_finisher_flag(self):
         obs = _make_obs(first_finisher_id=0)  # player_id=0 is finisher
         vec = encode_observation(obs)
-        assert vec[69] == pytest.approx(1.0)
+        assert vec[61] == pytest.approx(1.0)
 
     def test_not_first_finisher(self):
         obs = _make_obs(first_finisher_id=1)  # opponent is finisher
         vec = encode_observation(obs)
-        assert vec[69] == pytest.approx(0.0)
+        assert vec[61] == pytest.approx(0.0)
 
     def test_draw_pile_value_counts_absent(self):
         obs = _make_obs(draw_pile_value_counts=None)
         vec = encode_observation(obs)
-        assert np.allclose(vec[70:85], 0.0)
+        assert np.allclose(vec[62:77], 0.0)
 
     def test_draw_pile_value_counts_encoded(self):
         counts = [0] * 15
@@ -185,9 +162,9 @@ class TestEncodeObservation:
         obs = _make_obs(draw_pile_value_counts=counts)
         vec = encode_observation(obs)
 
-        assert vec[70] == pytest.approx(1.0)
-        assert vec[72] == pytest.approx(9.0 / 15.0)
-        assert vec[84] == pytest.approx(0.5)
+        assert vec[62] == pytest.approx(1.0)
+        assert vec[64] == pytest.approx(9.0 / 15.0)
+        assert vec[76] == pytest.approx(0.5)
 
 
 class TestObservationSpace:

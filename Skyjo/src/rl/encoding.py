@@ -1,5 +1,5 @@
 """
-Encodes an Observation into a flat 85-dim numpy vector for the RL agent.
+Encodes an Observation into a flat 77-dim numpy vector for the RL agent.
 
 Card values are normalized via (value + 2) / 14 → [0, 1].
 Each grid slot is encoded as a (value, is_revealed) pair:
@@ -12,7 +12,6 @@ Each grid slot is encoded as a (value, is_revealed) pair:
 """
 
 import numpy as np
-from collections import Counter
 from gymnasium import spaces
 from typing import Optional, List
 
@@ -20,7 +19,7 @@ from Skyjo.src.observation import Observation
 from Skyjo.src.card import Card
 from Skyjo.src.turn_phase import TurnPhase
 
-OBS_SIZE = 85
+OBS_SIZE = 77
 GRID_ROWS = 3
 GRID_COLS = 4
 CARD_VALUES = list(range(-2, 13))
@@ -70,23 +69,6 @@ def expected_card_value(draw_pile_value_counts: Optional[List[int]]) -> float:
     )
 
 
-def _column_match_counts(grid: Optional[List[List[Card]]]) -> List[float]:
-    """For each column, max count of revealed cards sharing the same value / 3."""
-    counts = [0.0] * GRID_COLS
-    if grid is None:
-        return counts
-    for c in range(GRID_COLS):
-        revealed_vals = []
-        for r in range(GRID_ROWS):
-            if r < len(grid) and c < len(grid[r]):
-                card = grid[r][c]
-                if card is not None and card.face_up:
-                    revealed_vals.append(card.value)
-        if revealed_vals:
-            counts[c] = max(Counter(revealed_vals).values()) / 3.0
-    return counts
-
-
 def _encode_grid(grid: Optional[List[List[Card]]], obs_vec: np.ndarray, offset: int):
     """Encode a 3×4 grid into obs_vec starting at offset.
     Per slot: (normalized_value, is_revealed).
@@ -134,7 +116,7 @@ def _encode_draw_pile_value_counts(obs: Observation, obs_vec: np.ndarray, offset
 def encode_observation(obs: Observation) -> np.ndarray:
     """Encode an Observation into a flat float32 numpy array.
 
-    Layout (85 dims):
+    Layout (77 dims):
       0-23:  Own grid (12 slots × 2: value, revealed)
       24-47: Opponent grid (12 slots × 2)
              Grid slot states: face-down → (0, 0); face-up → (norm_val, 1);
@@ -144,10 +126,9 @@ def encode_observation(obs: Observation) -> np.ndarray:
       52-56: Turn phase one-hot (5 phases)
       57-58: Scores (own, opponent) / 100
       59:    Draw pile size / 150
-      60-67: Column match counts (own 4, opponent 4)
-      68:    Final turn flag
-      69:    Is first finisher flag
-      70-84: Remaining draw-pile card counts per value -2..12,
+      60:    Final turn flag
+      61:    Is first finisher flag
+      62-76: Remaining draw-pile card counts per value -2..12,
              normalized by initial deck counts for each value
     """
     vec = np.zeros(OBS_SIZE, dtype=np.float32)
@@ -183,17 +164,11 @@ def encode_observation(obs: Observation) -> np.ndarray:
     # Draw pile size (59)
     vec[59] = obs.draw_pile_size / 150.0
 
-    # Column match counts (60-67)
-    for i, v in enumerate(_column_match_counts(obs.card_grid)):
-        vec[60 + i] = v
-    for i, v in enumerate(_column_match_counts(opponent_grid)):
-        vec[64 + i] = v
+    # Final turn flag (60)
+    vec[60] = 1.0 if obs.final_turn_phase else 0.0
 
-    # Final turn flag (68)
-    vec[68] = 1.0 if obs.final_turn_phase else 0.0
-
-    # Is first finisher (69)
-    vec[69] = (
+    # Is first finisher (61)
+    vec[61] = (
         1.0
         if (
             obs.first_finisher_id is not None and obs.first_finisher_id == obs.player_id
@@ -201,8 +176,8 @@ def encode_observation(obs: Observation) -> np.ndarray:
         else 0.0
     )
 
-    # Draw-pile card value distribution (70-84)
-    _encode_draw_pile_value_counts(obs, vec, 70)
+    # Draw-pile card value distribution (62-76)
+    _encode_draw_pile_value_counts(obs, vec, 62)
 
     return vec
 

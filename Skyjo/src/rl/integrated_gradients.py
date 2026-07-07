@@ -25,7 +25,7 @@ GridPos = Tuple[int, int]
 
 @dataclass(frozen=True)
 class EncodedFeature:
-    """Metadata for one scalar in the 85-dimensional observation vector."""
+    """Metadata for one scalar in the OBS_SIZE-dimensional observation vector."""
 
     index: int
     label: str
@@ -139,36 +139,17 @@ def build_feature_metadata() -> List[EncodedFeature]:
         ]
     )
 
-    for col in range(GRID_COLS):
-        features.append(
-            EncodedFeature(
-                60 + col,
-                f"own column {col} match count",
-                "column_matches",
-                owner="own",
-            )
-        )
-    for col in range(GRID_COLS):
-        features.append(
-            EncodedFeature(
-                64 + col,
-                f"opponent column {col} match count",
-                "column_matches",
-                owner="opponent",
-            )
-        )
-
     features.extend(
         [
-            EncodedFeature(68, "final turn flag", "round_state"),
-            EncodedFeature(69, "is first finisher", "round_state"),
+            EncodedFeature(60, "final turn flag", "round_state"),
+            EncodedFeature(61, "is first finisher", "round_state"),
         ]
     )
 
     for offset, value in enumerate(CARD_VALUES):
         features.append(
             EncodedFeature(
-                70 + offset,
+                62 + offset,
                 f"draw pile remaining {value}",
                 "draw_pile_counts",
             )
@@ -187,8 +168,7 @@ def build_feature_metadata() -> List[EncodedFeature]:
 FEATURE_METADATA = build_feature_metadata()
 
 # Situational feature groups, held fixed in the baseline so attribution lands on
-# card values. column_matches is excluded on purpose — it is the model's main
-# column-clear signal and should stay attributable
+# card values.
 _CONTEXT_BASELINE_GROUPS = frozenset(
     {"phase", "score", "draw_pile", "round_state", "draw_pile_counts"}
 )
@@ -235,9 +215,8 @@ def build_expected_card_baseline(observation: Observation) -> np.ndarray:
     """Build a neutral baseline that preserves the situation and card structure.
 
     Visible card values become the expected remaining card value; hidden cards
-    stay hidden and removed columns stay removed. Situational features are copied from the observation so attribution
-    concentrates on card values, while column-match counts are kept at the zero
-    baseline so they remain attributable.
+    stay hidden and removed columns stay removed. Situational features are
+    copied from the observation so attribution concentrates on card values.
     """
     baseline = np.zeros(OBS_SIZE, dtype=np.float32)
     expected_value = normalize_card_value(

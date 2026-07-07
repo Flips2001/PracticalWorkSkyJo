@@ -123,11 +123,10 @@ def test_expected_card_baseline_uses_remaining_draw_pile_counts():
     assert baseline[53] == pytest.approx(1.0)
 
 
-def test_expected_card_baseline_holds_situation_but_attributes_columns():
+def test_expected_card_baseline_holds_situational_features():
     counts = [0] * len(CARD_VALUES)
     counts[CARD_VALUES.index(12)] = 10
     observation = _observation(draw_pile_value_counts=counts)
-    # Two revealed matching cards in column 0 → a nonzero column-match feature.
     observation.card_grid = [
         [Card(7, face_up=True), Card(3, face_up=True), Card(0, face_up=False)],
         [Card(7, face_up=True), Card(4, face_up=True), Card(0, face_up=False)],
@@ -141,12 +140,8 @@ def test_expected_card_baseline_holds_situation_but_attributes_columns():
     # Situational features are copied from the observation (delta = 0).
     for index in range(52, 60):  # phase one-hot, scores, draw-pile size
         assert baseline[index] == pytest.approx(encoded[index])
-    for index in range(68, OBS_SIZE):  # round-state flags, draw-pile counts
+    for index in range(60, OBS_SIZE):  # round-state flags, draw-pile counts
         assert baseline[index] == pytest.approx(encoded[index])
-
-    # Column-match features stay at the zero baseline so they remain attributable.
-    assert np.all(baseline[60:68] == 0.0)
-    assert np.any(encoded[60:68] > 0.0)
 
 
 def test_expected_card_baseline_falls_back_to_initial_deck_expectation():
