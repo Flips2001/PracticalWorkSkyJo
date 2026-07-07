@@ -1,3 +1,18 @@
+"""Integrated-gradients explanations for RL moves.
+
+The baseline is the same public situation with all card knowledge erased:
+cards hidden, discard/hand absent, deck counts at "nothing seen", revealed
+totals zero. Phase, draw-pile size, round flags and removed columns are
+public regardless of card knowledge, so they are copied from the observation
+and cancel. Attributions therefore answer: how much did each piece of card
+knowledge push the policy toward the chosen move, relative to an agent in
+the identical situation that cannot see any cards.
+
+Value and revealed-flag features are summed per card: normalize(-2) == 0.0,
+so against the hidden baseline the split between the two channels is an
+encoding artifact and only their sum is meaningful.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -15,46 +30,42 @@ from Skyjo.src.rl.encoding import (
     GRID_ROWS,
     OBS_SIZE,
     encode_observation,
-    expected_card_value,
     normalize_card_value,
 )
 
 
 GridPos = Tuple[int, int]
 
+# Encoding layout (see encoding.py). Grid slots are (value, revealed) pairs.
+_OWN_GRID_OFFSET = 0
+_OPPONENT_GRID_OFFSET = 24
+_DISCARD_INDEX = 48
+_HAND_INDEX = 50
+_OWN_SCORE_INDEX = 57
+_OPPONENT_SCORE_INDEX = 58
+_DECK_COUNTS_OFFSET = 62
+
+# Public context regardless of card knowledge: phase one-hot, draw-pile size,
+# final-turn and first-finisher flags.
+_PUBLIC_CONTEXT_INDICES = tuple(range(52, 57)) + (59, 60, 61)
+
+# Below this log-prob delta vs the blindfold baseline (and top unit magnitude),
+# card knowledge did not drive the move and ranked influences would be noise.
+LOW_INFLUENCE_THRESHOLD = 0.25
+
 
 @dataclass(frozen=True)
-class EncodedFeature:
-    """Metadata for one scalar in the OBS_SIZE-dimensional observation vector."""
+class UnitAttribution:
+    """Signed influence of one piece of card knowledge on the chosen move."""
 
-    index: int
     label: str
-    group: str
+    attribution: float
     owner: Optional[str] = None
     pos: Optional[GridPos] = None
-
-
-@dataclass(frozen=True)
-class FeatureAttribution:
-    """Integrated-gradient attribution for a single encoded feature."""
-
-    feature: EncodedFeature
-    value: float
-    attribution: float
 
     @property
     def abs_attribution(self) -> float:
         return abs(self.attribution)
-
-
-@dataclass(frozen=True)
-class CellAttribution:
-    """Aggregated attribution for one visible grid cell."""
-
-    owner: str
-    pos: GridPos
-    attribution: float
-    abs_attribution: float
 
 
 @dataclass(frozen=True)
@@ -63,11 +74,16 @@ class ActionExplanation:
 
     action: Action
     action_index: int
-    top_features: List[FeatureAttribution] = field(default_factory=list)
-    cell_attributions: List[CellAttribution] = field(default_factory=list)
+    units: List[UnitAttribution] = field(default_factory=list)
     target_score: Optional[float] = None
     baseline_score: Optional[float] = None
     error: Optional[str] = None
+
+    @property
+    def total_influence(self) -> Optional[float]:
+        if self.target_score is None or self.baseline_score is None:
+            return None
+        return self.target_score - self.baseline_score
 
     def summary_lines(
         self, max_features: int = 5, include_action: bool = True
@@ -76,170 +92,45 @@ class ActionExplanation:
             return [f"Attribution unavailable: {self.error}"]
 
         lines = [f"RL chose: {self.action}"] if include_action else []
-        if self.target_score is not None and self.baseline_score is not None:
-            delta = self.target_score - self.baseline_score
-            lines.append(f"Total influence vs baseline: {delta:+.3f}")
+        ranked = sorted(
+            (unit for unit in self.units if unit.abs_attribution > 0),
+            key=lambda unit: unit.abs_attribution,
+            reverse=True,
+        )
 
-        items = _summary_items(self.cell_attributions, self.top_features)
-        lines.extend(line for _, line in items[:max_features])
+        total = self.total_influence
+        if total is not None:
+            lines.append(f"Card knowledge influence: {total:+.3f}")
+            top = ranked[0].abs_attribution if ranked else 0.0
+            if abs(total) < LOW_INFLUENCE_THRESHOLD and top < LOW_INFLUENCE_THRESHOLD:
+                lines.append("Card knowledge had little influence on this move.")
+                return lines
+
+        for unit in ranked[:max_features]:
+            direction = "toward" if unit.attribution >= 0 else "against"
+            lines.append(f"{direction} {unit.label}: {unit.attribution:+.3f}")
 
         return lines
 
-    def grid_map(self, owner: str) -> Dict[GridPos, CellAttribution]:
+    def grid_map(self, owner: str) -> Dict[GridPos, UnitAttribution]:
         return {
-            cell.pos: cell for cell in self.cell_attributions if cell.owner == owner
+            unit.pos: unit
+            for unit in self.units
+            if unit.owner == owner and unit.pos is not None
         }
 
 
-def build_feature_metadata() -> List[EncodedFeature]:
-    """Return metadata for every scalar produced by encode_observation()."""
-    features: List[EncodedFeature] = []
-
-    def add_grid(owner: str, offset: int):
-        for row in range(GRID_ROWS):
-            for col in range(GRID_COLS):
-                base = offset + (row * GRID_COLS + col) * 2
-                prefix = f"{owner} R{row}C{col}"
-                features.append(
-                    EncodedFeature(
-                        index=base,
-                        label=f"{prefix} value",
-                        group=f"{owner}_grid",
-                        owner=owner,
-                        pos=(row, col),
-                    )
-                )
-                features.append(
-                    EncodedFeature(
-                        index=base + 1,
-                        label=f"{prefix} revealed",
-                        group=f"{owner}_grid",
-                        owner=owner,
-                        pos=(row, col),
-                    )
-                )
-
-    add_grid("own", 0)
-    add_grid("opponent", 24)
-
-    features.extend(
-        [
-            EncodedFeature(48, "discard top value", "discard"),
-            EncodedFeature(49, "discard top present", "discard"),
-            EncodedFeature(50, "hand card value", "hand"),
-            EncodedFeature(51, "hand card present", "hand"),
-            EncodedFeature(52, "phase starting flips", "phase"),
-            EncodedFeature(53, "phase choose draw", "phase"),
-            EncodedFeature(54, "phase drawn hidden", "phase"),
-            EncodedFeature(55, "phase drawn open", "phase"),
-            EncodedFeature(56, "phase must flip after discard", "phase"),
-            EncodedFeature(57, "own round score", "score"),
-            EncodedFeature(58, "opponent round score", "score"),
-            EncodedFeature(59, "draw pile size", "draw_pile"),
-        ]
-    )
-
-    features.extend(
-        [
-            EncodedFeature(60, "final turn flag", "round_state"),
-            EncodedFeature(61, "is first finisher", "round_state"),
-        ]
-    )
-
-    for offset, value in enumerate(CARD_VALUES):
-        features.append(
-            EncodedFeature(
-                62 + offset,
-                f"draw pile remaining {value}",
-                "draw_pile_counts",
-            )
-        )
-
-    features.sort(key=lambda item: item.index)
-    if len(features) != OBS_SIZE or any(
-        item.index != i for i, item in enumerate(features)
-    ):
-        raise RuntimeError(
-            "Integrated-gradients feature metadata does not match encoding."
-        )
-    return features
-
-
-FEATURE_METADATA = build_feature_metadata()
-
-# Situational feature groups, held fixed in the baseline so attribution lands on
-# card values.
-_CONTEXT_BASELINE_GROUPS = frozenset(
-    {"phase", "score", "draw_pile", "round_state", "draw_pile_counts"}
-)
-_CONTEXT_BASELINE_INDICES = tuple(
-    feature.index
-    for feature in FEATURE_METADATA
-    if feature.group in _CONTEXT_BASELINE_GROUPS
-)
-
-
-def _summary_items(
-    cell_attributions: Iterable[CellAttribution],
-    feature_attributions: Iterable[FeatureAttribution],
-) -> List[Tuple[float, str]]:
-    items: List[Tuple[float, str]] = []
-
-    for cell in cell_attributions:
-        if cell.abs_attribution <= 0:
-            continue
-        row, col = cell.pos
-        direction = "toward" if cell.attribution >= 0 else "against"
-        items.append(
-            (
-                cell.abs_attribution,
-                f"{direction} {cell.owner} R{row}C{col} card: {cell.attribution:+.3f}",
-            )
-        )
-
-    for item in feature_attributions:
-        if item.feature.pos is not None or item.abs_attribution <= 0:
-            continue
-        direction = "toward" if item.attribution >= 0 else "against"
-        items.append(
-            (
-                item.abs_attribution,
-                f"{direction} {item.feature.label}: {item.attribution:+.3f}",
-            )
-        )
-
-    return sorted(items, key=lambda item: item[0], reverse=True)
-
-
-def build_expected_card_baseline(observation: Observation) -> np.ndarray:
-    """Build a neutral baseline that preserves the situation and card structure.
-
-    Visible card values become the expected remaining card value; hidden cards
-    stay hidden and removed columns stay removed. Situational features are
-    copied from the observation so attribution concentrates on card values.
-    """
+def build_blindfold_baseline(observation: Observation) -> np.ndarray:
+    """Erase all card knowledge, keep the public situation."""
     baseline = np.zeros(OBS_SIZE, dtype=np.float32)
-    expected_value = normalize_card_value(
-        expected_card_value(observation.draw_pile_value_counts)
-    )
+    baseline[_DECK_COUNTS_OFFSET:] = 1.0  # full deck: nothing seen yet
 
-    _apply_grid_baseline(baseline, observation.card_grid, 0, expected_value)
-    opponent_grid = next((g for g in observation.opponent_cards if g is not None), None)
-    _apply_grid_baseline(baseline, opponent_grid, 24, expected_value)
-
-    for value_index, present_index, card in (
-        (48, 49, observation.discard_top),
-        (50, 51, observation.hand_card),
-    ):
-        if card is not None:
-            baseline[value_index] = expected_value
-            baseline[present_index] = 1.0
-
-    # Mirror situational features from the observation so they cancel out.
     encoded = encode_observation(observation)
-    for index in _CONTEXT_BASELINE_INDICES:
+    for index in _PUBLIC_CONTEXT_INDICES:
         baseline[index] = encoded[index]
 
+    _copy_removed_slots(baseline, observation.card_grid, _OWN_GRID_OFFSET)
+    _copy_removed_slots(baseline, _opponent_grid(observation), _OPPONENT_GRID_OFFSET)
     return baseline
 
 
@@ -320,41 +211,23 @@ def explain_action(
     legal_actions: Iterable[Action],
     *,
     steps: int = 32,
-    top_k: int = 8,
 ) -> ActionExplanation:
     """Build an integrated-gradients explanation for a selected action."""
     action_index = action_to_int(action)
-    obs_vec = encode_observation(observation)
-    mask = legal_actions_mask(list(legal_actions))
 
     attributions, target_score, baseline_score = integrated_gradients(
         model=model,
-        observation_vector=obs_vec,
+        observation_vector=encode_observation(observation),
         action_index=action_index,
-        action_mask=mask,
+        action_mask=legal_actions_mask(list(legal_actions)),
         steps=steps,
-        baseline=build_expected_card_baseline(observation),
+        baseline=build_blindfold_baseline(observation),
     )
-
-    feature_attributions = [
-        FeatureAttribution(
-            feature=feature,
-            value=float(obs_vec[feature.index]),
-            attribution=float(attributions[feature.index]),
-        )
-        for feature in FEATURE_METADATA
-    ]
-    top_features = sorted(
-        feature_attributions,
-        key=lambda item: item.abs_attribution,
-        reverse=True,
-    )[:top_k]
 
     return ActionExplanation(
         action=action,
         action_index=action_index,
-        top_features=top_features,
-        cell_attributions=_aggregate_cell_attributions(feature_attributions),
+        units=_build_units(observation, attributions),
         target_score=target_score,
         baseline_score=baseline_score,
     )
@@ -366,6 +239,92 @@ def unavailable_explanation(action: Action, error: Exception) -> ActionExplanati
         action_index=action_to_int(action),
         error=str(error),
     )
+
+
+def _opponent_grid(observation: Observation):
+    return next((g for g in observation.opponent_cards if g is not None), None)
+
+
+def _slot_is_removed(grid, row: int, col: int) -> bool:
+    # Mirrors _encode_grid: a slot outside the grid is a removed column.
+    return grid is None or row >= len(grid) or col >= len(grid[row])
+
+
+def _copy_removed_slots(baseline: np.ndarray, grid, offset: int) -> None:
+    for row in range(GRID_ROWS):
+        for col in range(GRID_COLS):
+            if _slot_is_removed(grid, row, col):
+                index = offset + (row * GRID_COLS + col) * 2
+                baseline[index] = normalize_card_value(0)
+                baseline[index + 1] = 1.0
+
+
+def _slot_label(prefix: str, grid, row: int, col: int) -> str:
+    if _slot_is_removed(grid, row, col):
+        return f"{prefix} removed slot at R{row}C{col}"
+    card = grid[row][col]
+    if card is not None and card.face_up:
+        return f"{prefix} {card.value} at R{row}C{col}"
+    return f"{prefix} hidden card at R{row}C{col}"
+
+
+def _build_units(
+    observation: Observation, attributions: np.ndarray
+) -> List[UnitAttribution]:
+    units: List[UnitAttribution] = []
+
+    for owner, prefix, grid, offset in (
+        ("own", "your", observation.card_grid, _OWN_GRID_OFFSET),
+        ("opponent", "opponent's", _opponent_grid(observation), _OPPONENT_GRID_OFFSET),
+    ):
+        for row in range(GRID_ROWS):
+            for col in range(GRID_COLS):
+                index = offset + (row * GRID_COLS + col) * 2
+                units.append(
+                    UnitAttribution(
+                        label=_slot_label(prefix, grid, row, col),
+                        attribution=float(
+                            attributions[index] + attributions[index + 1]
+                        ),
+                        owner=owner,
+                        pos=(row, col),
+                    )
+                )
+
+    for label_prefix, index, card in (
+        ("discard", _DISCARD_INDEX, observation.discard_top),
+        ("hand card", _HAND_INDEX, observation.hand_card),
+    ):
+        if card is not None:
+            units.append(
+                UnitAttribution(
+                    label=f"{label_prefix} {card.value}",
+                    attribution=float(attributions[index] + attributions[index + 1]),
+                )
+            )
+
+    units.append(
+        UnitAttribution(
+            label="your revealed total",
+            attribution=float(attributions[_OWN_SCORE_INDEX]),
+        )
+    )
+    units.append(
+        UnitAttribution(
+            label="opponent revealed total",
+            attribution=float(attributions[_OPPONENT_SCORE_INDEX]),
+        )
+    )
+
+    for offset, value in enumerate(CARD_VALUES):
+        units.append(
+            UnitAttribution(
+                label=f"remaining {value}s in deck",
+                attribution=float(attributions[_DECK_COUNTS_OFFSET + offset]),
+            )
+        )
+
+    return units
 
 
 def _prepare_action_masks(
@@ -400,50 +359,3 @@ def _target_action_log_probs(
         device=obs_tensor.device,
     )
     return distribution.log_prob(actions)
-
-
-def _apply_grid_baseline(
-    baseline: np.ndarray,
-    grid,
-    offset: int,
-    baseline_card_value: float,
-) -> None:
-    removed_value = normalize_card_value(0)
-    for row in range(GRID_ROWS):
-        for col in range(GRID_COLS):
-            index = offset + (row * GRID_COLS + col) * 2
-            if grid is not None and row < len(grid) and col < len(grid[row]):
-                card = grid[row][col]
-                if card is not None and card.face_up:
-                    baseline[index] = baseline_card_value
-                    baseline[index + 1] = 1.0
-            else:
-                baseline[index] = removed_value
-                baseline[index + 1] = 1.0
-
-
-def _aggregate_cell_attributions(
-    feature_attributions: Iterable[FeatureAttribution],
-) -> List[CellAttribution]:
-    totals: Dict[Tuple[str, GridPos], float] = {}
-    absolute_totals: Dict[Tuple[str, GridPos], float] = {}
-
-    for item in feature_attributions:
-        owner = item.feature.owner
-        pos = item.feature.pos
-        if owner not in {"own", "opponent"} or pos is None:
-            continue
-
-        key = (owner, pos)
-        totals[key] = totals.get(key, 0.0) + item.attribution
-        absolute_totals[key] = absolute_totals.get(key, 0.0) + item.abs_attribution
-
-    return [
-        CellAttribution(
-            owner=owner,
-            pos=pos,
-            attribution=totals[(owner, pos)],
-            abs_attribution=absolute_totals[(owner, pos)],
-        )
-        for owner, pos in sorted(totals)
-    ]

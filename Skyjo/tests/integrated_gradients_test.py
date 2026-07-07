@@ -9,14 +9,12 @@ from Skyjo.src.observation import Observation
 from Skyjo.src.rl.action_mapping import NUM_ACTIONS
 from Skyjo.src.rl.encoding import (
     CARD_VALUES,
-    INITIAL_CARD_COUNTS,
     OBS_SIZE,
     encode_observation,
     normalize_card_value,
 )
 from Skyjo.src.rl.integrated_gradients import (
-    FEATURE_METADATA,
-    build_expected_card_baseline,
+    build_blindfold_baseline,
     explain_action,
     integrated_gradients,
 )
@@ -67,11 +65,6 @@ def _observation(draw_pile_value_counts=None):
     )
 
 
-def test_feature_metadata_matches_encoding_size():
-    assert len(FEATURE_METADATA) == OBS_SIZE
-    assert [feature.index for feature in FEATURE_METADATA] == list(range(OBS_SIZE))
-
-
 def test_integrated_gradients_matches_chosen_action_log_prob_delta():
     model = DummyModel()
     obs = np.zeros(OBS_SIZE, dtype=np.float32)
@@ -94,66 +87,38 @@ def test_integrated_gradients_matches_chosen_action_log_prob_delta():
     assert attributions.sum() == pytest.approx(target_score - baseline_score, abs=1e-4)
 
 
-def test_expected_card_baseline_uses_remaining_draw_pile_counts():
-    counts = [0] * len(CARD_VALUES)
-    counts[CARD_VALUES.index(12)] = 10
-    observation = _observation(draw_pile_value_counts=counts)
-    observation.card_grid = [
-        [Card(12, face_up=True), Card(0, face_up=False), Card(-2, face_up=True)],
-        [Card(0, face_up=False), Card(0, face_up=False), Card(0, face_up=False)],
-        [Card(0, face_up=False), Card(0, face_up=False), Card(0, face_up=False)],
-    ]
+def test_blindfold_baseline_erases_card_knowledge():
+    observation = _observation()
+    observation.card_grid[0][0] = Card(12, face_up=True)
     observation.hand_card = Card(-1, face_up=True)
-
-    baseline = build_expected_card_baseline(observation)
-
-    assert baseline[0] == pytest.approx(normalize_card_value(12))
-    assert baseline[1] == pytest.approx(1.0)
-    assert baseline[2] == pytest.approx(0.0)
-    assert baseline[3] == pytest.approx(0.0)
-    assert baseline[4] == pytest.approx(normalize_card_value(12))
-    assert baseline[5] == pytest.approx(1.0)
-    assert baseline[6] == pytest.approx(normalize_card_value(0))
-    assert baseline[7] == pytest.approx(1.0)
-    assert baseline[48] == pytest.approx(normalize_card_value(12))
-    assert baseline[49] == pytest.approx(1.0)
-    assert baseline[50] == pytest.approx(normalize_card_value(12))
-    assert baseline[51] == pytest.approx(1.0)
-    # Phase (CHOOSE_DRAW → index 53) is situational, so the baseline mirrors it.
-    assert baseline[53] == pytest.approx(1.0)
-
-
-def test_expected_card_baseline_holds_situational_features():
-    counts = [0] * len(CARD_VALUES)
-    counts[CARD_VALUES.index(12)] = 10
-    observation = _observation(draw_pile_value_counts=counts)
-    observation.card_grid = [
-        [Card(7, face_up=True), Card(3, face_up=True), Card(0, face_up=False)],
-        [Card(7, face_up=True), Card(4, face_up=True), Card(0, face_up=False)],
-        [Card(0, face_up=False), Card(0, face_up=False), Card(0, face_up=False)],
-    ]
     observation.scores = [15, 9]
 
+    baseline = build_blindfold_baseline(observation)
+
+    # Grids hidden, discard and hand absent, revealed totals zero.
+    assert baseline[:48] == pytest.approx(np.zeros(48))
+    assert baseline[48:52] == pytest.approx(np.zeros(4))
+    assert baseline[57] == pytest.approx(0.0)
+    assert baseline[58] == pytest.approx(0.0)
+    # Deck counts revert to the full deck: nothing seen yet.
+    assert baseline[62:] == pytest.approx(np.ones(len(CARD_VALUES)))
+
+
+def test_blindfold_baseline_keeps_public_context():
+    observation = _observation()
+    observation.card_grid = [row[:3] for row in _hidden_grid()]  # column 3 removed
     encoded = encode_observation(observation)
-    baseline = build_expected_card_baseline(observation)
 
-    # Situational features are copied from the observation (delta = 0).
-    for index in range(52, 60):  # phase one-hot, scores, draw-pile size
+    baseline = build_blindfold_baseline(observation)
+
+    # Phase one-hot, draw-pile size, round flags mirror the observation.
+    for index in (52, 53, 54, 55, 56, 59, 60, 61):
         assert baseline[index] == pytest.approx(encoded[index])
-    for index in range(60, OBS_SIZE):  # round-state flags, draw-pile counts
-        assert baseline[index] == pytest.approx(encoded[index])
-
-
-def test_expected_card_baseline_falls_back_to_initial_deck_expectation():
-    observation = _observation(draw_pile_value_counts=[0] * len(CARD_VALUES))
-
-    baseline = build_expected_card_baseline(observation)
-
-    total_cards = sum(INITIAL_CARD_COUNTS.values())
-    expected_card_value = (
-        sum(value * count for value, count in INITIAL_CARD_COUNTS.items()) / total_cards
-    )
-    assert baseline[48] == pytest.approx(normalize_card_value(expected_card_value))
+    # Removed slots are public structure: copied as (normalize(0), revealed).
+    for row in range(3):
+        index = (row * 4 + 3) * 2
+        assert baseline[index] == pytest.approx(normalize_card_value(0))
+        assert baseline[index + 1] == pytest.approx(1.0)
 
 
 def test_integrated_gradients_rejects_masked_selected_action():
@@ -189,41 +154,10 @@ def test_integrated_gradients_restores_policy_training_mode():
     assert model.policy.training is True
 
 
-def test_explain_action_returns_ranked_features():
+def test_explain_action_attributes_card_units_not_context():
     model = DummyModel()
     action = Action(ActionType.DRAW_OPEN_CARD)
-    legal_actions = [
-        Action(ActionType.DRAW_HIDDEN_CARD),
-        action,
-    ]
-    counts = [0] * len(CARD_VALUES)
-    counts[CARD_VALUES.index(-2)] = 10
-
-    explanation = explain_action(
-        model,
-        _observation(draw_pile_value_counts=counts),
-        action,
-        legal_actions,
-        steps=32,
-        top_k=2,
-    )
-    top_labels = [item.feature.label for item in explanation.top_features]
-
-    assert explanation.error is None
-    # Card features are attributed; the situational phase is fixed in the baseline.
-    assert explanation.top_features[0].feature.label == "discard top value"
-    assert "phase choose draw" not in top_labels
-    assert explanation.action == action
-    assert explanation.action_index == 1
-    assert encode_observation(_observation()).shape == (OBS_SIZE,)
-
-
-def test_summary_lines_show_card_influences_not_raw_encoded_values():
-    model = DummyModel()
-    action = Action(ActionType.DRAW_OPEN_CARD)
-    counts = [0] * len(CARD_VALUES)
-    counts[CARD_VALUES.index(-2)] = 10
-    observation = _observation(draw_pile_value_counts=counts)
+    observation = _observation()
     observation.card_grid[0][0] = Card(12, face_up=True)
 
     explanation = explain_action(
@@ -234,12 +168,78 @@ def test_summary_lines_show_card_influences_not_raw_encoded_values():
         steps=32,
     )
 
+    assert explanation.error is None
+    assert explanation.action == action
+    assert explanation.action_index == 1
+
+    by_label = {unit.label: unit for unit in explanation.units}
+    # Weighted card inputs (own R0C0 value, discard value) carry attribution.
+    assert by_label["your 12 at R0C0"].attribution > 0
+    assert by_label["discard 5"].attribution > 0
+    # The phase weight is public context and produces no unit at all.
+    assert not any("phase" in label for label in by_label)
+    # Hidden cards have zero delta and therefore exactly zero attribution.
+    assert by_label["your hidden card at R1C1"].attribution == 0.0
+    # Deck counts differ from the full-deck baseline and get attributed.
+    assert "remaining -2s in deck" in by_label
+
+
+def test_grid_map_covers_all_cells_for_colouring():
+    model = DummyModel()
+    action = Action(ActionType.DRAW_OPEN_CARD)
+    observation = _observation()
+    observation.card_grid[0][0] = Card(12, face_up=True)
+
+    explanation = explain_action(
+        model,
+        observation,
+        action,
+        [Action(ActionType.DRAW_HIDDEN_CARD), action],
+    )
+
+    own = explanation.grid_map("own")
+    assert set(own) == {(r, c) for r in range(3) for c in range(4)}
+    assert own[(0, 0)].abs_attribution > 0
+    assert len(explanation.grid_map("opponent")) == 12
+
+
+def test_summary_lines_speak_in_card_language():
+    model = DummyModel()
+    action = Action(ActionType.DRAW_OPEN_CARD)
+    observation = _observation()
+    observation.card_grid[0][0] = Card(12, face_up=True)
+
+    explanation = explain_action(
+        model,
+        observation,
+        action,
+        [Action(ActionType.DRAW_HIDDEN_CARD), action],
+    )
     lines = explanation.summary_lines(max_features=3, include_action=False)
 
-    assert any("own R0C0 card" in line for line in lines)
-    assert any("discard top value" in line for line in lines)
-    assert all("(value " not in line for line in lines)
+    assert any("Card knowledge influence:" in line for line in lines)
+    assert any("your 12 at R0C0" in line for line in lines)
+    assert any("discard 5" in line for line in lines)
     assert all(
-        "toward " in line or "against " in line or "Total influence" in line
-        for line in lines
+        line.startswith(("toward ", "against ", "Card knowledge")) for line in lines
     )
+
+
+def test_summary_lines_report_low_influence_moves():
+    model = DummyModel()
+    with torch.no_grad():
+        model.policy.linear.weight.zero_()
+    action = Action(ActionType.DRAW_OPEN_CARD)
+
+    explanation = explain_action(
+        model,
+        _observation(),
+        action,
+        [Action(ActionType.DRAW_HIDDEN_CARD), action],
+    )
+    lines = explanation.summary_lines(include_action=False)
+
+    assert lines == [
+        "Card knowledge influence: +0.000",
+        "Card knowledge had little influence on this move.",
+    ]
