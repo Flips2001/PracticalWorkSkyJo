@@ -70,36 +70,12 @@ def run_game(stdscr):
         pass
 
 
-def run_legacy():
-    """Run the game with the legacy text-based interface."""
-    from Skyjo.src.players.human_player import HumanPlayer
-
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
-    model_path = get_model_path()
-
-    game = SkyjoGame()
-    player1 = RLPlayer(
-        player_id=0,
-        player_name="RL Player",
-        model_path=model_path,
-    )
-    player2 = HumanPlayer(player_id=1, player_name="Phillip")
-    game.add_player(player1)
-    game.add_player(player2)
-    game.play_game()
-
-
 def main():
-    if "--legacy" in sys.argv:
-        run_legacy()
-    else:
-        logging.basicConfig(level=logging.CRITICAL)
-        try:
-            curses.wrapper(run_game)
-        except _curses.error:
-            # Fallback to legacy mode if no terminal is available (e.g. running from IDE)
-            print("No terminal available for curses UI, falling back to legacy mode.")
-            run_legacy()
+    logging.basicConfig(level=logging.CRITICAL)
+    try:
+        curses.wrapper(run_game)
+    except _curses.error:
+        print("No terminal available for the curses UI; run from a real terminal.")
 
 
 if __name__ == "__main__":

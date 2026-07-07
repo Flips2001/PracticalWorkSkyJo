@@ -1,6 +1,5 @@
 """
 Terminal-based interactive player using curses for Skyjo.
-Replaces the old print/input HumanPlayer with a modern TUI.
 """
 
 import curses
