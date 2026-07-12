@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 
 import torch
+import wandb
 from sb3_contrib import MaskablePPO
 from stable_baselines3.common.vec_env import SubprocVecEnv
 from stable_baselines3.common.callbacks import BaseCallback
@@ -23,8 +24,10 @@ from Skyjo.src.players.player import Player
 DEVICE = "cpu"
 CHECKPOINT_DIR = os.path.join(os.path.dirname(__file__), "checkpoints")
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
+TENSORBOARD_DIR = os.path.join(os.path.dirname(__file__), "tb_logs")
+WANDB_PROJECT = "skyjo-rl"
 
-TOTAL_TIMESTEPS = 120_000_000
+TOTAL_TIMESTEPS = 400_000_000
 NUM_CHECKPOINTS = 10
 NUM_EVALS = 20
 SAVE_EVERY = 3_000_000
@@ -33,6 +36,20 @@ EVAL_GAMES = 100
 NUM_PROCS = 8
 COLUMN_CLEAR_DRILL_ENVS = 1
 DEFAULT_MODEL_PREFIX = "skyjo_ppo"
+
+LEARNING_RATE = 3e-4
+CLIP_RANGE = 0.2
+NET_ARCH = [256, 256, 128]
+PPO_KWARGS = dict(
+    n_steps=4096,
+    batch_size=512,
+    n_epochs=10,
+    gamma=0.99,
+    gae_lambda=0.95,
+    ent_coef=0.01,
+    vf_coef=0.5,
+    max_grad_norm=0.5,
+)
 
 
 def _best_model_path(model_prefix: str) -> str:
@@ -247,6 +264,12 @@ class TqdmCallback(BaseCallback):
                 results[selfplay.name] = evaluate_opponent(self.model, selfplay)
             primary = results[self.primary_name]
 
+            # Recorded via the SB3 logger so eval metrics share the step axis
+            # of SB3's own train/rollout metrics synced to wandb.
+            for name, result in results.items():
+                for metric, value in result.items():
+                    self.logger.record(f"eval/{name}/{metric}", value)
+
             key = _selection_key(primary)
             marker = ""
             if key > self._best_key:
@@ -288,29 +311,6 @@ def train(
         + [make_column_clear_drill_env() for _ in range(column_clear_drill_envs)]
     )
 
-    policy_kwargs = dict(
-        net_arch=dict(pi=[256, 256, 128], vf=[256, 256, 128]),
-        activation_fn=torch.nn.ReLU,
-    )
-
-    model = MaskablePPO(
-        "MlpPolicy",
-        env,
-        verbose=0,
-        learning_rate=linear_schedule(3e-4),
-        n_steps=4096,
-        batch_size=512,
-        n_epochs=10,
-        gamma=0.99,
-        gae_lambda=0.95,
-        clip_range=linear_schedule(0.2),
-        ent_coef=0.01,
-        vf_coef=0.5,
-        max_grad_norm=0.5,
-        device=DEVICE,
-        policy_kwargs=policy_kwargs,
-    )
-
     # Plug the evaluation opponents here. Training itself stays pure self-play;
     # these only measure progress. `primary_name` is the best-model objective.
     # The self-play opponent (current best) is loaded and evaluated each eval.
@@ -318,6 +318,48 @@ def train(
         phillips_opponent(),
     ]
     primary_name = "Phillips"
+
+    run = wandb.init(
+        project=WANDB_PROJECT,
+        name=model_prefix,
+        config={
+            **PPO_KWARGS,
+            "learning_rate": LEARNING_RATE,
+            "clip_range": CLIP_RANGE,
+            "net_arch": NET_ARCH,
+            "total_timesteps": TOTAL_TIMESTEPS,
+            "eval_every": EVAL_EVERY,
+            "eval_games": EVAL_GAMES,
+            "save_every": SAVE_EVERY,
+            "num_procs": NUM_PROCS,
+            "self_play_envs": self_play_envs,
+            "column_clear_drill_envs": column_clear_drill_envs,
+            "column_clear_reward_divisor": COLUMN_CLEAR_REWARD_DIVISOR,
+            "obs_size": OBS_SIZE,
+            "num_actions": NUM_ACTIONS,
+            "model_prefix": model_prefix,
+            "primary_opponent": primary_name,
+            "device": DEVICE,
+        },
+        sync_tensorboard=True,
+    )
+
+    policy_kwargs = dict(
+        net_arch=dict(pi=NET_ARCH, vf=NET_ARCH),
+        activation_fn=torch.nn.ReLU,
+    )
+
+    model = MaskablePPO(
+        "MlpPolicy",
+        env,
+        verbose=0,
+        learning_rate=linear_schedule(LEARNING_RATE),
+        clip_range=linear_schedule(CLIP_RANGE),
+        device=DEVICE,
+        policy_kwargs=policy_kwargs,
+        tensorboard_log=TENSORBOARD_DIR,
+        **PPO_KWARGS,
+    )
 
     print("🎮 Skyjo RL Training")
     print(f"   Model prefix: {model_prefix}")
@@ -366,7 +408,10 @@ def train(
             f"RL avg={result['rl_avg']:.1f} | opp avg={result['opp_avg']:.1f} | "
             f"clears={result['clears']:.2f}"
         )
+        for metric, value in result.items():
+            run.summary[f"final/{opp.name}/{metric}"] = value
 
+    run.finish()
     env.close()
 
 
