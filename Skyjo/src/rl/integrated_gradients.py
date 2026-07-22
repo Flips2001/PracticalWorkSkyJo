@@ -1,9 +1,9 @@
 """Integrated-gradients explanations for RL moves.
 
 The baseline is the same public situation with all card knowledge erased:
-cards hidden, deck counts at "nothing seen", revealed totals zero. Phase,
-draw-pile size, round flags and removed columns are public regardless of
-card knowledge, so they are copied from the observation and cancel.
+cards hidden, deck counts at "nothing seen". Phase, draw-pile size, round
+flags and removed columns are public regardless of card knowledge, so they
+are copied from the observation and cancel.
 Attributions therefore answer: how much did each piece of card knowledge
 push the policy toward the chosen move, relative to an agent in the
 identical situation that cannot see any cards.
@@ -49,13 +49,11 @@ _OWN_GRID_OFFSET = 0
 _OPPONENT_GRID_OFFSET = 24
 _DISCARD_INDEX = 48
 _HAND_INDEX = 50
-_OWN_SCORE_INDEX = 57
-_OPPONENT_SCORE_INDEX = 58
-_DECK_COUNTS_OFFSET = 62
+_DECK_COUNTS_OFFSET = 60
 
 # Public context regardless of card knowledge: phase one-hot, draw-pile size,
 # final-turn and first-finisher flags.
-_PUBLIC_CONTEXT_INDICES = tuple(range(52, 57)) + (59, 60, 61)
+_PUBLIC_CONTEXT_INDICES = tuple(range(52, _DECK_COUNTS_OFFSET))
 
 
 @dataclass(frozen=True)
@@ -64,7 +62,7 @@ class UnitAttribution:
 
     label: str
     attribution: float
-    group: str  # "cell" | "discard" | "hand" | "score" | "deck"
+    group: str  # "cell" | "discard" | "hand" | "deck"
     owner: Optional[str] = None
     pos: Optional[GridPos] = None
     card_value: Optional[int] = None  # deck units: which card value
@@ -313,19 +311,6 @@ def _build_units(
                     group=group,
                 )
             )
-
-    for owner, label, index in (
-        ("own", "your revealed total", _OWN_SCORE_INDEX),
-        ("opponent", "opponent revealed total", _OPPONENT_SCORE_INDEX),
-    ):
-        units.append(
-            UnitAttribution(
-                label=label,
-                attribution=float(attributions[index]),
-                group="score",
-                owner=owner,
-            )
-        )
 
     for offset, value in enumerate(CARD_VALUES):
         units.append(

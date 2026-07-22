@@ -25,9 +25,10 @@ DEVICE = "cpu"
 CHECKPOINT_DIR = os.path.join(os.path.dirname(__file__), "checkpoints")
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 TENSORBOARD_DIR = os.path.join(os.path.dirname(__file__), "tb_logs")
-WANDB_PROJECT = "skyjo-rl"
+WANDB_PROJECT = "MasterProject"
+WANDB_ENTITY = "phillip-uni"
 
-TOTAL_TIMESTEPS = 400_000_000
+TOTAL_TIMESTEPS = 140_000_000
 NUM_CHECKPOINTS = 10
 NUM_EVALS = 20
 SAVE_EVERY = 3_000_000
@@ -37,9 +38,9 @@ NUM_PROCS = 8
 COLUMN_CLEAR_DRILL_ENVS = 1
 DEFAULT_MODEL_PREFIX = "skyjo_ppo"
 
-LEARNING_RATE = 3e-4
+LEARNING_RATE = 1e-4
 CLIP_RANGE = 0.2
-NET_ARCH = [256, 256, 128]
+NET_ARCH = [256, 256, 256, 128]
 PPO_KWARGS = dict(
     n_steps=4096,
     batch_size=512,
@@ -230,6 +231,7 @@ class TqdmCallback(BaseCallback):
         self._last_eval = 0
         self._last_save = 0
         self._best_key = (float("-inf"), float("-inf"))
+        self.best_margin = float("-inf")
 
     def _on_training_start(self):
         self.pbar = tqdm(
@@ -263,6 +265,7 @@ class TqdmCallback(BaseCallback):
             if selfplay is not None:
                 results[selfplay.name] = evaluate_opponent(self.model, selfplay)
             primary = results[self.primary_name]
+            self.best_margin = max(self.best_margin, primary["margin"])
 
             # Recorded via the SB3 logger so eval metrics share the step axis
             # of SB3's own train/rollout metrics synced to wandb.
@@ -298,18 +301,9 @@ def train(
     model_prefix=DEFAULT_MODEL_PREFIX,
     column_clear_drill_envs=COLUMN_CLEAR_DRILL_ENVS,
 ):
-    best_model_path = _best_model_path(model_prefix)
     self_play_envs = NUM_PROCS - column_clear_drill_envs
     if self_play_envs <= 0:
         raise ValueError("NUM_PROCS must be greater than column_clear_drill_envs")
-
-    env = SubprocVecEnv(
-        [
-            make_env(best_model_path=best_model_path, device=DEVICE)
-            for _ in range(self_play_envs)
-        ]
-        + [make_column_clear_drill_env() for _ in range(column_clear_drill_envs)]
-    )
 
     # Plug the evaluation opponents here. Training itself stays pure self-play;
     # these only measure progress. `primary_name` is the best-model objective.
@@ -319,8 +313,11 @@ def train(
     ]
     primary_name = "Phillips"
 
+    # Values below are defaults; a sweep agent overrides them via wandb.config,
+    # so all hyperparameters are read back from `cfg` instead of the constants.
     run = wandb.init(
         project=WANDB_PROJECT,
+        entity=WANDB_ENTITY,
         name=model_prefix,
         config={
             **PPO_KWARGS,
@@ -337,15 +334,29 @@ def train(
             "column_clear_reward_divisor": COLUMN_CLEAR_REWARD_DIVISOR,
             "obs_size": OBS_SIZE,
             "num_actions": NUM_ACTIONS,
-            "model_prefix": model_prefix,
             "primary_opponent": primary_name,
             "device": DEVICE,
         },
         sync_tensorboard=True,
     )
+    cfg = run.config
+    if model_prefix is None:
+        model_prefix = f"sweep_{run.id}"
+    run.config.update({"model_prefix": model_prefix}, allow_val_change=True)
+    best_model_path = _best_model_path(model_prefix)
+    net_arch = list(cfg.net_arch)
+    total_timesteps = cfg.total_timesteps
+
+    env = SubprocVecEnv(
+        [
+            make_env(best_model_path=best_model_path, device=DEVICE)
+            for _ in range(self_play_envs)
+        ]
+        + [make_column_clear_drill_env() for _ in range(column_clear_drill_envs)]
+    )
 
     policy_kwargs = dict(
-        net_arch=dict(pi=NET_ARCH, vf=NET_ARCH),
+        net_arch=dict(pi=net_arch, vf=net_arch),
         activation_fn=torch.nn.ReLU,
     )
 
@@ -353,22 +364,22 @@ def train(
         "MlpPolicy",
         env,
         verbose=0,
-        learning_rate=linear_schedule(LEARNING_RATE),
-        clip_range=linear_schedule(CLIP_RANGE),
+        learning_rate=linear_schedule(cfg.learning_rate),
+        clip_range=linear_schedule(cfg.clip_range),
         device=DEVICE,
         policy_kwargs=policy_kwargs,
         tensorboard_log=TENSORBOARD_DIR,
-        **PPO_KWARGS,
+        **{key: cfg[key] for key in PPO_KWARGS},
     )
 
     print("🎮 Skyjo RL Training")
     print(f"   Model prefix: {model_prefix}")
     print(
-        f"   Device: {DEVICE} | Envs: {NUM_PROCS} | Steps: {TOTAL_TIMESTEPS/1e6:.0f}M"
+        f"   Device: {DEVICE} | Envs: {NUM_PROCS} | Steps: {total_timesteps/1e6:.0f}M"
     )
     print(f"   OBS_SIZE={OBS_SIZE} | Actions={NUM_ACTIONS}")
     print(
-        f"   Eval every {EVAL_EVERY/1e6:.1f}M steps ({EVAL_GAMES} games) vs "
+        f"   Eval every {cfg.eval_every/1e6:.1f}M steps ({EVAL_GAMES} games) vs "
         f"{', '.join(o.name for o in opponents)} + selfplay (current best); "
         f"best = highest {primary_name} win rate"
     )
@@ -380,19 +391,26 @@ def train(
     print("   Self-play opponent: best model, every 10th move random\n")
 
     callback = TqdmCallback(
-        TOTAL_TIMESTEPS,
+        total_timesteps,
         opponents=opponents,
         primary_name=primary_name,
         best_model_path=best_model_path,
         model_prefix=model_prefix,
+        eval_every=cfg.eval_every,
+        save_every=cfg.save_every,
     )
-    model.learn(total_timesteps=TOTAL_TIMESTEPS, callback=callback)
+    model.learn(total_timesteps=total_timesteps, callback=callback)
 
     final_path = os.path.join(CHECKPOINT_DIR, f"{model_prefix}_final")
     model.save(final_path)
 
     print(f"\n✅ Training complete. Final model: {final_path}")
     print(f"   Best {primary_name} win rate: {callback._best_key[0]:.0f}%")
+
+    # Sweep objective: best margin vs the primary opponent seen during the run.
+    if callback.best_margin > float("-inf"):
+        run.summary["best/winrate"] = callback._best_key[0]
+        run.summary["best/margin"] = callback.best_margin
 
     # Final evaluation vs every opponent, including the self-play best.
     print("\n📊 Final Evaluation (200 games):")

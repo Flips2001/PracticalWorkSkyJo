@@ -92,17 +92,14 @@ def test_blindfold_baseline_erases_card_knowledge():
     observation = _observation()
     observation.card_grid[0][0] = Card(12, face_up=True)
     observation.hand_card = Card(-1, face_up=True)
-    observation.scores = [15, 9]
 
     baseline = build_blindfold_baseline(observation)
     expected = normalize_card_value(
         expected_card_value(observation.draw_pile_value_counts)
     )
 
-    # Grids hidden, revealed totals zero.
+    # Grids hidden.
     assert baseline[:48] == pytest.approx(np.zeros(48))
-    assert baseline[57] == pytest.approx(0.0)
-    assert baseline[58] == pytest.approx(0.0)
     # Discard and hand exist publicly: presence kept, value erased to the
     # expected remaining-deck card.
     assert baseline[48] == pytest.approx(expected)
@@ -110,7 +107,7 @@ def test_blindfold_baseline_erases_card_knowledge():
     assert baseline[50] == pytest.approx(expected)
     assert baseline[51] == pytest.approx(1.0)
     # Deck counts revert to the full deck: nothing seen yet.
-    assert baseline[62:] == pytest.approx(np.ones(len(CARD_VALUES)))
+    assert baseline[60:] == pytest.approx(np.ones(len(CARD_VALUES)))
 
 
 def test_blindfold_baseline_keeps_absent_hand_absent():
@@ -130,7 +127,7 @@ def test_blindfold_baseline_keeps_public_context():
     baseline = build_blindfold_baseline(observation)
 
     # Phase one-hot, draw-pile size, round flags mirror the observation.
-    for index in (52, 53, 54, 55, 56, 59, 60, 61):
+    for index in range(52, 60):
         assert baseline[index] == pytest.approx(encoded[index])
     # Removed slots are public structure: copied as (normalize(0), revealed).
     for row in range(3):
@@ -220,7 +217,6 @@ def test_explanation_lookup_helpers_for_ui():
     assert explanation.max_abs_attribution > 0
     assert explanation.unit_for("discard").label == "discard 5"
     assert explanation.unit_for("hand") is None
-    assert explanation.unit_for("score", "own").label == "your revealed total"
     assert set(explanation.deck_map()) == set(CARD_VALUES)
 
 

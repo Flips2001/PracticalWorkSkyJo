@@ -118,41 +118,43 @@ class TestEncodeObservation:
         vec = encode_observation(obs)
         assert vec[52] == pytest.approx(1.0)
 
-    def test_scores_normalized(self):
-        obs = _make_obs(scores=[50, 75])
-        vec = encode_observation(obs)
-        assert vec[57] == pytest.approx(0.5)  # own score / 100
-        assert vec[58] == pytest.approx(0.75)  # opponent score / 100
+    def test_scores_are_not_encoded(self):
+        # Round scores are derivable from revealed cards; the model must
+        # learn them, so identical boards with different score fields encode
+        # identically.
+        vec_a = encode_observation(_make_obs(scores=[50, 75]))
+        vec_b = encode_observation(_make_obs(scores=[0, 0]))
+        assert np.array_equal(vec_a, vec_b)
 
     def test_draw_pile_size_normalized(self):
         obs = _make_obs(draw_pile_size=75)
         vec = encode_observation(obs)
-        assert vec[59] == pytest.approx(75.0 / 150.0)
+        assert vec[57] == pytest.approx(75.0 / 150.0)
 
     def test_final_turn_flag(self):
         obs = _make_obs(final_turn_phase=True)
         vec = encode_observation(obs)
-        assert vec[60] == pytest.approx(1.0)
+        assert vec[58] == pytest.approx(1.0)
 
     def test_not_final_turn(self):
         obs = _make_obs(final_turn_phase=False)
         vec = encode_observation(obs)
-        assert vec[60] == pytest.approx(0.0)
+        assert vec[58] == pytest.approx(0.0)
 
     def test_first_finisher_flag(self):
         obs = _make_obs(first_finisher_id=0)  # player_id=0 is finisher
         vec = encode_observation(obs)
-        assert vec[61] == pytest.approx(1.0)
+        assert vec[59] == pytest.approx(1.0)
 
     def test_not_first_finisher(self):
         obs = _make_obs(first_finisher_id=1)  # opponent is finisher
         vec = encode_observation(obs)
-        assert vec[61] == pytest.approx(0.0)
+        assert vec[59] == pytest.approx(0.0)
 
     def test_draw_pile_value_counts_absent(self):
         obs = _make_obs(draw_pile_value_counts=None)
         vec = encode_observation(obs)
-        assert np.allclose(vec[62:77], 0.0)
+        assert np.allclose(vec[60:75], 0.0)
 
     def test_draw_pile_value_counts_encoded(self):
         counts = [0] * 15
@@ -162,9 +164,9 @@ class TestEncodeObservation:
         obs = _make_obs(draw_pile_value_counts=counts)
         vec = encode_observation(obs)
 
-        assert vec[62] == pytest.approx(1.0)
-        assert vec[64] == pytest.approx(9.0 / 15.0)
-        assert vec[76] == pytest.approx(0.5)
+        assert vec[60] == pytest.approx(1.0)
+        assert vec[62] == pytest.approx(9.0 / 15.0)
+        assert vec[74] == pytest.approx(0.5)
 
 
 class TestObservationSpace:

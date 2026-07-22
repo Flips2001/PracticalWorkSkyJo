@@ -105,11 +105,10 @@ class _Heat:
     def deck(self, card_value: int) -> int:
         return self._tint(self._deck.get(card_value))
 
-    def unit(self, group: str, viewer: Optional[bool] = None) -> int:
+    def unit(self, group: str) -> int:
         if self._explanation is None:
             return 0
-        owner = None if viewer is None else ("opponent" if viewer else "own")
-        return self._tint(self._explanation.unit_for(group, owner))
+        return self._tint(self._explanation.unit_for(group))
 
 
 def get_card_color(card: Card) -> int:
@@ -471,10 +470,12 @@ class TerminalRenderer:
         )
         self._safe_addstr(row, start_col, header, attr)
         score_text = f"Score: {score}"
-        score_attr = heat.unit("score", viewer=is_self) or curses.color_pair(
-            COLOR_SCORE
+        self._safe_addstr(
+            row,
+            start_col + len(header) + 2,
+            score_text,
+            curses.color_pair(COLOR_SCORE),
         )
-        self._safe_addstr(row, start_col + len(header) + 2, score_text, score_attr)
         row += 1
 
         # Column numbers (0-indexed, aligned over card cells)
