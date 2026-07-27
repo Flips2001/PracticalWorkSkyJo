@@ -14,8 +14,7 @@ moves on.
 import curses
 from typing import Any, List, Optional
 
-from Skyjo.src.card import Card
-from Skyjo.src.observation import Observation
+from Skyjo.src.observation import Observation, ObservedCard
 from Skyjo.src.turn_phase import TurnPhase
 
 
@@ -111,7 +110,7 @@ class _Heat:
         return self._tint(self._explanation.unit_for(group))
 
 
-def get_card_color(card: Card) -> int:
+def get_card_color(card: ObservedCard) -> int:
     """Get the color pair for a card based on its value."""
     if not card.face_up:
         return COLOR_HIDDEN
@@ -126,7 +125,7 @@ def get_card_color(card: Card) -> int:
         return COLOR_HIGH
 
 
-def format_card(card: Card) -> str:
+def format_card(card: ObservedCard) -> str:
     """Format a card for display."""
     if not card.face_up:
         return " ?? "
@@ -454,7 +453,7 @@ class TerminalRenderer:
         start_row: int,
         start_col: int,
         name: str,
-        grid: List[List[Card]],
+        grid: tuple[tuple[ObservedCard, ...], ...],
         score: int,
         is_self: bool,
         heat: _Heat,

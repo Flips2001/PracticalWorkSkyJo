@@ -1,3 +1,5 @@
+from dataclasses import FrozenInstanceError
+
 import pytest
 
 from Skyjo.src.skyjo_game import SkyjoGame
@@ -57,7 +59,7 @@ def empty_grid():
     return [[Card(0) for _ in range(4)] for _ in range(3)]
 
 
-def test_get_observation_basic_fields_and_deepcopy(two_players):
+def test_get_observation_basic_fields_and_immutability(two_players):
     game, p0, p1 = two_players
     p0_state = game.get_player_state(p0)
     p1_state = game.get_player_state(p1)
@@ -65,21 +67,33 @@ def test_get_observation_basic_fields_and_deepcopy(two_players):
     p0_state.grid = grid_from_values([[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12]])
     p1_state.grid = grid_from_values([[-1, 0, 1, 2], [3, 4, 5, 6], [7, 8, 9, 10]])
 
-    game.game_state.discard_pile = [Card(42)]
+    game.game_state.discard_pile = [Card(42, face_up=True)]
     game.game_state.draw_pile = [Card(-2), Card(-1)]
 
     obs = game.get_observation(p0)
 
     assert obs.player_id == 0
-    assert obs.scores == [0, 0]
-    obs.discard_top.reveal()
+    assert obs.scores == (0, 0)
     assert obs.discard_top.get_value() == 42
     assert obs.draw_pile_size == 2
-    assert obs.opponent_cards == [None, p1_state.grid]
+    assert obs.opponent_cards[0] is None
+    assert all(card.is_hidden() for row in obs.opponent_cards[1] for card in row)
 
-    # deepcopy check
-    obs.card_grid[0][0].reveal()
-    assert p0_state.grid[0][0].is_hidden()
+    hidden_card = obs.card_grid[0][0]
+    assert hidden_card.value is None
+    assert not hasattr(hidden_card, "reveal")
+    with pytest.raises(ValueError, match="face down"):
+        hidden_card.get_value()
+    with pytest.raises(FrozenInstanceError):
+        hidden_card.face_up = True
+    with pytest.raises(FrozenInstanceError):
+        obs.draw_pile_size = 0
+    with pytest.raises(TypeError):
+        obs.card_grid[0][0] = obs.card_grid[0][1]
+
+    p0_state.grid[0][0].reveal()
+    assert obs.card_grid[0][0].is_hidden()
+    assert not p0_state.grid[0][0].is_hidden()
 
 
 def test_player_state_is_owned_by_game(two_players):

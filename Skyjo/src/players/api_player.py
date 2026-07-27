@@ -25,8 +25,7 @@ from typing import List, Optional, Tuple
 
 from Skyjo.src.action import Action
 from Skyjo.src.action_type import ActionType
-from Skyjo.src.card import Card
-from Skyjo.src.observation import Observation
+from Skyjo.src.observation import Observation, ObservedCard
 from Skyjo.src.players.player import Player
 from Skyjo.src.turn_phase import TurnPhase
 
@@ -101,7 +100,7 @@ def _api_pos_to_local(api_pos: int) -> Tuple[int, int]:
 
 
 def _card_grid_to_api_board(
-    card_grid: Optional[List[List[Optional[Card]]]],
+    card_grid: Optional[tuple[tuple[ObservedCard, ...], ...]],
 ) -> dict:
     """Convert a local 3xN grid to the API's 12-slot board dict."""
     cards = [0] * BOARD_SIZE

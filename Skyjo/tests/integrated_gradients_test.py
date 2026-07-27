@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import numpy as np
 import pytest
 import torch
@@ -66,6 +68,12 @@ def _observation(draw_pile_value_counts=None):
     )
 
 
+def _with_grid_card(observation, row, col, card):
+    grid = [list(grid_row) for grid_row in observation.card_grid]
+    grid[row][col] = card
+    return replace(observation, card_grid=grid)
+
+
 def test_integrated_gradients_matches_chosen_action_log_prob_delta():
     model = DummyModel()
     obs = np.zeros(OBS_SIZE, dtype=np.float32)
@@ -90,8 +98,8 @@ def test_integrated_gradients_matches_chosen_action_log_prob_delta():
 
 def test_blindfold_baseline_erases_card_knowledge():
     observation = _observation()
-    observation.card_grid[0][0] = Card(12, face_up=True)
-    observation.hand_card = Card(-1, face_up=True)
+    observation = _with_grid_card(observation, 0, 0, Card(12, face_up=True))
+    observation = replace(observation, hand_card=Card(-1, face_up=True))
 
     baseline = build_blindfold_baseline(observation)
     expected = normalize_card_value(
@@ -121,7 +129,10 @@ def test_blindfold_baseline_keeps_absent_hand_absent():
 
 def test_blindfold_baseline_keeps_public_context():
     observation = _observation()
-    observation.card_grid = [row[:3] for row in _hidden_grid()]  # column 3 removed
+    observation = replace(
+        observation,
+        card_grid=[row[:3] for row in _hidden_grid()],  # column 3 removed
+    )
     encoded = encode_observation(observation)
 
     baseline = build_blindfold_baseline(observation)
@@ -173,9 +184,9 @@ def test_explain_action_attributes_card_units_not_context():
     model = DummyModel()
     action = Action(ActionType.DRAW_OPEN_CARD)
     observation = _observation()
-    observation.card_grid[0][0] = Card(12, face_up=True)
+    observation = _with_grid_card(observation, 0, 0, Card(12, face_up=True))
     # Well above the expected-value baseline so the discard delta is positive.
-    observation.discard_top = Card(12, face_up=True)
+    observation = replace(observation, discard_top=Card(12, face_up=True))
 
     explanation = explain_action(
         model,
@@ -205,7 +216,7 @@ def test_explanation_lookup_helpers_for_ui():
     model = DummyModel()
     action = Action(ActionType.DRAW_OPEN_CARD)
     observation = _observation()
-    observation.card_grid[0][0] = Card(12, face_up=True)
+    observation = _with_grid_card(observation, 0, 0, Card(12, face_up=True))
 
     explanation = explain_action(
         model,
@@ -224,7 +235,7 @@ def test_grid_map_covers_all_cells_for_colouring():
     model = DummyModel()
     action = Action(ActionType.DRAW_OPEN_CARD)
     observation = _observation()
-    observation.card_grid[0][0] = Card(12, face_up=True)
+    observation = _with_grid_card(observation, 0, 0, Card(12, face_up=True))
 
     explanation = explain_action(
         model,
