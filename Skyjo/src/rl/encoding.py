@@ -86,7 +86,7 @@ def _encode_grid(grid: Optional[List[List[Card]]], obs_vec: np.ndarray, offset: 
             if grid is not None and r < len(grid) and c < len(grid[r]):
                 card = grid[r][c]
                 if card is not None and card.face_up:
-                    obs_vec[idx] = normalize_card_value(card.value)
+                    obs_vec[idx] = normalize_card_value(card.get_value())
                     obs_vec[idx + 1] = 1.0
             else:
                 # Removed column → encoded as revealed with neutral value 0
@@ -134,12 +134,12 @@ def encode_observation(obs: Observation) -> np.ndarray:
 
     # Discard top (48-49)
     if obs.discard_top is not None:
-        vec[48] = normalize_card_value(obs.discard_top.value)
+        vec[48] = normalize_card_value(obs.discard_top.get_value())
         vec[49] = 1.0
 
     # Hand card (50-51)
     if obs.hand_card is not None:
-        vec[50] = normalize_card_value(obs.hand_card.value)
+        vec[50] = normalize_card_value(obs.hand_card.get_value())
         vec[51] = 1.0
 
     # Turn phase one-hot (52-56)

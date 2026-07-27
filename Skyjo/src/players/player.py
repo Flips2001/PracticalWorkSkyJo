@@ -2,7 +2,6 @@ from abc import ABC, abstractmethod
 
 from Skyjo.src.action import Action
 from Skyjo.src.observation import Observation
-from Skyjo.src.player_state import PlayerState
 from typing import Any, List, Optional
 
 
@@ -15,7 +14,6 @@ class Player(ABC):
         """
         self.player_id = player_id
         self.player_name = player_name
-        self.player_state = PlayerState(player_id)
 
     @abstractmethod
     def select_action(

@@ -271,7 +271,7 @@ def _slot_label(prefix: str, grid, row: int, col: int) -> str:
         return f"{prefix} removed slot at R{row}C{col}"
     card = grid[row][col]
     if card is not None and card.face_up:
-        return f"{prefix} {card.value} at R{row}C{col}"
+        return f"{prefix} {card.get_value()} at R{row}C{col}"
     return f"{prefix} hidden card at R{row}C{col}"
 
 
@@ -306,7 +306,7 @@ def _build_units(
         if card is not None:
             units.append(
                 UnitAttribution(
-                    label=f"{group} {card.value}",
+                    label=f"{group} {card.get_value()}",
                     attribution=float(attributions[index] + attributions[index + 1]),
                     group=group,
                 )

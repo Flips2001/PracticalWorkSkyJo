@@ -76,7 +76,7 @@ def _one_swap_from_clear_board(rng):
                     grid[row][col] = Card(target_value, face_up=True)
                 continue
             exclude = {target_value}
-            above = [grid[r][col].value for r in range(row)]
+            above = [grid[r][col].get_value() for r in range(row)]
             if len(above) == 2 and above[0] == above[1]:
                 exclude.add(above[0])  # don't let the third cell uniform the column
             value = _pick_value(rng, budget, exclude=frozenset(exclude))
@@ -98,7 +98,7 @@ def _one_swap_from_clear_board(rng):
     for board in (grid, opponent_grid):
         for board_row in board:
             for card in board_row:
-                remaining[card.value] -= 1
+                remaining[card._get_value_for_engine()] -= 1
     remaining[target_value] -= 1  # discard top
     draw_pile = [Card(v) for v, count in remaining.items() for _ in range(count)]
 
@@ -116,8 +116,10 @@ def _model_clears_column(model, rng) -> bool:
     game.add_player(rl_player)
     game.add_player(opponent)
 
-    rl_player.player_state.grid = grid
-    opponent.player_state.grid = opponent_grid
+    rl_state = game.get_player_state(rl_player)
+    opponent_state = game.get_player_state(opponent)
+    rl_state.grid = grid
+    opponent_state.grid = opponent_grid
     game.game_state.discard_pile = discard_pile
     game.game_state.draw_pile = draw_pile
     game.game_state.hand_card = None
@@ -130,15 +132,13 @@ def _model_clears_column(model, rng) -> bool:
         return False
 
     game.execute_action(rl_player, draw_action)
-    game.game_state.remove_uniform_columns_to_discard_pile(rl_player.player_state)
+    game.game_state.remove_uniform_columns_to_discard_pile(rl_state)
 
     swap_action = rl_player.select_action(
         game.get_observation(rl_player), game.get_legal_actions(rl_player)
     )
     game.execute_action(rl_player, swap_action)
-    clear_stats = game.game_state.remove_uniform_columns_to_discard_pile(
-        rl_player.player_state
-    )
+    clear_stats = game.game_state.remove_uniform_columns_to_discard_pile(rl_state)
     return clear_stats.columns_removed > 0
 
 

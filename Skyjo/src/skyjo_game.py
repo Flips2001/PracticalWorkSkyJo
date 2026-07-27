@@ -29,20 +29,27 @@ class SkyjoGame:
     def __init__(self):
         self.game_state = GameState()
         self.players: List[Player] = []
+        self.player_states: dict[int, PlayerState] = {}
         self.num_players = 0
         self.last_column_clear_stats: dict[int, ColumnClearStats] = {}
         self.total_columns_cleared: dict[int, int] = {}
         self.total_column_clear_value_sum: dict[int, int] = {}
 
     def add_player(self, player: Player):
-        player.player_state.reset_game()
+        if player.player_id in self.player_states:
+            raise ValueError(f"Duplicate player ID: {player.player_id}")
+        player_state = PlayerState(player.player_id)
         player_grid = self.game_state.get_new_player_grid()
-        player.player_state.grid = player_grid
+        player_state.grid = player_grid
+        self.player_states[player.player_id] = player_state
         self.players.append(player)
         self.num_players += 1
 
+    def get_player_state(self, player: Player) -> PlayerState:
+        return self.player_states[player.player_id]
+
     def get_all_player_states(self) -> List[PlayerState]:
-        return [player.player_state for player in self.players]
+        return [self.get_player_state(player) for player in self.players]
 
     def step(self):
         pass
@@ -58,7 +65,7 @@ class SkyjoGame:
         opponent_cards = [None] * len(self.players)
         for p in self.players:
             if p.player_id != player.player_id:
-                opponent_cards[p.player_id] = p.player_state.get_grid()
+                opponent_cards[p.player_id] = self.get_player_state(p).get_grid()
         return opponent_cards
 
     def get_players_scores(self) -> List[int]:
@@ -68,7 +75,7 @@ class SkyjoGame:
         """
         opponent_scores = []
         for p in self.players:
-            opponent_scores.append(p.player_state.get_round_score())
+            opponent_scores.append(self.get_player_state(p).get_round_score())
         return opponent_scores
 
     def get_observation(self, player: Player) -> Observation:
@@ -80,7 +87,7 @@ class SkyjoGame:
 
         return Observation(
             player_id=player.player_id,
-            card_grid=copy.deepcopy(player.player_state.get_grid()),
+            card_grid=copy.deepcopy(self.get_player_state(player).get_grid()),
             scores=self.get_players_scores(),
             hand_card=self.game_state.hand_card,
             opponent_cards=self.get_opponent_players_cards(player),
@@ -98,7 +105,9 @@ class SkyjoGame:
         )
 
     def _get_draw_pile_value_counts(self) -> List[int]:
-        value_counts = Counter(card.value for card in self.game_state.draw_pile)
+        value_counts = Counter(
+            card._get_value_for_engine() for card in self.game_state.draw_pile
+        )
         return [value_counts.get(value, 0) for value in _CARD_VALUES]
 
     def get_legal_actions(self, player: Player) -> List[Action]:
@@ -112,7 +121,7 @@ class SkyjoGame:
         match self.game_state.phase:
 
             case TurnPhase.STARTING_FLIPS:
-                hidden_positions = player.player_state.get_hidden_positions()
+                hidden_positions = self.get_player_state(player).get_hidden_positions()
                 if not hidden_positions:
                     # No hidden cards left to flip; nothing to do
                     return []
@@ -129,22 +138,22 @@ class SkyjoGame:
 
             case TurnPhase.HAVE_DRAWN_HIDDEN:
                 # If a card is in hand, allow swapping it with any grid position
-                for pos in player.player_state.get_all_positions():
+                for pos in self.get_player_state(player).get_all_positions():
                     legal.append(Action(ActionType.SWAP_CARD, pos=pos))
                 # Allow discarding the drawn card only if there exists at least one hidden card to flip afterwards
-                if player.player_state.get_hidden_positions():
+                if self.get_player_state(player).get_hidden_positions():
                     legal.append(Action(ActionType.DISCARD_CARD))
                 return legal
 
             case TurnPhase.HAVE_DRAWN_OPEN:
                 # If a card is in hand, allow swapping it with any grid position
-                for pos in player.player_state.get_all_positions():
+                for pos in self.get_player_state(player).get_all_positions():
                     legal.append(Action(ActionType.SWAP_CARD, pos=pos))
                 return legal
 
             case TurnPhase.HAVE_TO_FLIP_AFTER_DISCARD:
                 # Must choose a hidden card to flip
-                for pos in player.player_state.get_hidden_positions():
+                for pos in self.get_player_state(player).get_hidden_positions():
                     legal.append(Action(ActionType.FLIP_CARD, pos=pos))
                 return legal
 
@@ -181,11 +190,12 @@ class SkyjoGame:
                 r, c = action.pos
                 incoming = self.game_state.hand_card
                 incoming.reveal()
-                outgoing = player.player_state.grid[r][c]
+                player_state = self.get_player_state(player)
+                outgoing = player_state.grid[r][c]
                 if outgoing is not None:  # Theoretically should never be None
                     outgoing.reveal()
                     self.game_state.discard_pile.append(outgoing)
-                player.player_state.grid[r][c] = incoming
+                player_state.grid[r][c] = incoming
                 self.game_state.hand_card = None
                 self.game_state.phase = TurnPhase.END_TURN
                 return
@@ -205,7 +215,7 @@ class SkyjoGame:
                     action.pos is not None
                 ), "Attempted to flip card from empty position"
                 r, c = action.pos
-                card = player.player_state.grid[r][c]
+                card = self.get_player_state(player).grid[r][c]
                 if card is not None and card.is_hidden():
                     card.reveal()
 
@@ -265,10 +275,11 @@ class SkyjoGame:
 
         for i, player in enumerate(self.players):
             # Sum of the revealed cards for this round
-            score = player.player_state.get_round_score()
+            player_state = self.get_player_state(player)
+            score = player_state.get_round_score()
 
             # Highest individual revealed card for tie-break
-            highest_card = player.player_state.get_highest_revealed_card()
+            highest_card = player_state.get_highest_revealed_card()
 
             logger.info(
                 "Player %s has score %s, highest card %s",
@@ -307,7 +318,7 @@ class SkyjoGame:
             snapshots = self._observer_snapshots(player)
             self.execute_action(player, selected_action)
             clear_stats = self.game_state.remove_uniform_columns_to_discard_pile(
-                player.player_state
+                self.get_player_state(player)
             )
             self.last_column_clear_stats[player.player_id] = clear_stats
             self.total_columns_cleared[player.player_id] = (

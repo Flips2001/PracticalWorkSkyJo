@@ -28,7 +28,7 @@ class PhillipsPlayer(Player):
             # Choose to draw from discard pile if the top card has value cutoff or less
             if (
                 observation.discard_top is not None
-                and observation.discard_top.value <= self.cutoff
+                and observation.discard_top.get_value() <= self.cutoff
             ):
                 for action in legal_actions:
                     if action.type == ActionType.DRAW_OPEN_CARD:
@@ -45,7 +45,7 @@ class PhillipsPlayer(Player):
             or observation.turn_phase == TurnPhase.HAVE_DRAWN_OPEN
         ):
             revealed_cards = [
-                (card.value, (i, j))
+                (card.get_value(), (i, j))
                 for i, row in enumerate(observation.card_grid)
                 for j, card in enumerate(row)
                 if not card.is_hidden()
@@ -60,7 +60,7 @@ class PhillipsPlayer(Player):
             if (
                 observation.hand_card is not None
                 and pos is not None
-                and observation.hand_card.value < highest_card_value
+                and observation.hand_card.get_value() < highest_card_value
             ):
                 for action in legal_actions:
                     if action.type == ActionType.SWAP_CARD and action.pos == pos:
@@ -68,7 +68,7 @@ class PhillipsPlayer(Player):
             # If the hand card is greater than cutoff, discard it and flip a random card
             elif (
                 observation.hand_card is not None
-                and observation.hand_card.value > self.cutoff
+                and observation.hand_card.get_value() > self.cutoff
             ):
                 for action in legal_actions:
                     if action.type == ActionType.DISCARD_CARD:

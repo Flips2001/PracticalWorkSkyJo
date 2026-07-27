@@ -85,7 +85,7 @@ class GameState:
             return False
         for row in range(1, len(grid)):
             card = grid[row][col]
-            if not card.face_up or card.value != first_card.value:
+            if not card.face_up or card.get_value() != first_card.get_value():
                 return False
         return True
 
@@ -111,7 +111,7 @@ class GameState:
         for col in reversed(cols_to_remove):
             for row in range(num_rows):
                 removed_card = grid[row].pop(col)
-                removed_card_value_sum += removed_card.value
+                removed_card_value_sum += removed_card.get_value()
                 self.discard_pile.append(removed_card)
 
         return ColumnClearStats(

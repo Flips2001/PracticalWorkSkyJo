@@ -115,11 +115,12 @@ def get_card_color(card: Card) -> int:
     """Get the color pair for a card based on its value."""
     if not card.face_up:
         return COLOR_HIDDEN
-    if card.value < 0:
+    value = card.get_value()
+    if value < 0:
         return COLOR_NEGATIVE
-    elif card.value <= 4:
+    elif value <= 4:
         return COLOR_LOW
-    elif card.value <= 8:
+    elif value <= 8:
         return COLOR_MID
     else:
         return COLOR_HIGH
@@ -129,7 +130,7 @@ def format_card(card: Card) -> str:
     """Format a card for display."""
     if not card.face_up:
         return " ?? "
-    value = card.value
+    value = card.get_value()
     if value < 0:
         return f"{value:3d} "
     elif value < 10:
