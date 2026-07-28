@@ -15,7 +15,7 @@ class PhillipsPlayer(Player):
 
     - If the hand card is greater than `cutoff`, discard it and flip a random card; otherwise, exchange it with a hidden card in the grid.
 
-    - If no other strategy applies, select the first legal action available.
+    - If no other strategy applies, select a random legal action.
     """
 
     def __init__(self, player_id: int, player_name: str, cutoff: int = 2):
@@ -88,7 +88,7 @@ class PhillipsPlayer(Player):
                     if action.type == ActionType.SWAP_CARD and action.pos == pos:
                         return action
 
-        # Always select the first legal action
+        # Always select a random first legal action
         if not legal_actions:
             raise ValueError("No legal actions available to select from.")
         return random.choice(legal_actions)
