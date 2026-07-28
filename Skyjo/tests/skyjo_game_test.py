@@ -141,18 +141,17 @@ def test_execute_action_draw_hidden_then_swap(two_players, empty_grid):
     assert game.game_state.phase == TurnPhase.END_TURN
 
 
-def test_execute_action_draw_open_discard_then_flip(two_players, empty_grid):
+def test_execute_action_draw_hidden_discard_then_flip(two_players, empty_grid):
     game, p0, _ = two_players
     p0_state = game.get_player_state(p0)
     p0_state.grid = empty_grid
 
-    discard = Card(9)
-    discard.reveal()
-    game.game_state.discard_pile = [discard]
+    drawn_card = Card(9)
+    game.game_state.draw_pile = [drawn_card]
     game.game_state.phase = TurnPhase.CHOOSE_DRAW
 
-    game.execute_action(p0, Action(ActionType.DRAW_OPEN_CARD))
-    assert game.game_state.hand_card is discard
+    game.execute_action(p0, Action(ActionType.DRAW_HIDDEN_CARD))
+    assert game.game_state.hand_card is drawn_card
 
     game.execute_action(p0, Action(ActionType.DISCARD_CARD))
     assert game.game_state.phase == TurnPhase.HAVE_TO_FLIP_AFTER_DISCARD
@@ -160,6 +159,21 @@ def test_execute_action_draw_open_discard_then_flip(two_players, empty_grid):
     game.execute_action(p0, Action(ActionType.FLIP_CARD, pos=(0, 0)))
     assert p0_state.grid[0][0].face_up
     assert game.game_state.phase == TurnPhase.END_TURN
+
+
+def test_execute_action_rejects_action_not_in_legal_actions(two_players):
+    game, p0, _ = two_players
+    game.game_state.phase = TurnPhase.CHOOSE_DRAW
+    game.game_state.draw_pile = [Card(5)]
+
+    illegal_action = Action(ActionType.SWAP_CARD, pos=(0, 0))
+
+    with pytest.raises(ValueError, match="Illegal action"):
+        game.execute_action(p0, illegal_action)
+
+    assert game.game_state.phase == TurnPhase.CHOOSE_DRAW
+    assert game.game_state.hand_card is None
+    assert len(game.game_state.draw_pile) == 1
 
 
 def test_turn_executes_full_plan_and_resets_phase(game):

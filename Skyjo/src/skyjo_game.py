@@ -167,6 +167,14 @@ class SkyjoGame:
         Execute the selected action for the given player, mutating game state
         and advancing the turn phase accordingly.
         """
+        legal_actions = self.get_legal_actions(player)
+        if action not in legal_actions:
+            raise ValueError(
+                f"Illegal action {action} for player {player.player_id} "
+                f"during phase {self.game_state.phase}. "
+                f"Legal actions: {legal_actions}"
+            )
+
         # Start of turn: choose draw source
         match action.type:
             case ActionType.DRAW_HIDDEN_CARD:
