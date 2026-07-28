@@ -141,7 +141,7 @@ class SkyjoGame:
                 for pos in self.get_player_state(player).get_all_positions():
                     legal.append(Action(ActionType.SWAP_CARD, pos=pos))
                 # Allow discarding the drawn card only if there exists at least one hidden card to flip afterwards
-                if self.get_player_state(player).get_hidden_positions():
+                if len(self.get_player_state(player).get_hidden_positions()) > 0:
                     legal.append(Action(ActionType.DISCARD_CARD))
                 return legal
 
