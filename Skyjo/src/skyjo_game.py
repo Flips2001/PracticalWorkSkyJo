@@ -338,17 +338,21 @@ class SkyjoGame:
             clear_stats = self.game_state.remove_uniform_columns_to_discard_pile(
                 self.get_player_state(player)
             )
-            self.last_column_clear_stats[player.player_id] = clear_stats
-            self.total_columns_cleared[player.player_id] = (
-                self.total_columns_cleared.get(player.player_id, 0)
-                + clear_stats.columns_removed
-            )
-            self.total_column_clear_value_sum[player.player_id] = (
-                self.total_column_clear_value_sum.get(player.player_id, 0)
-                + clear_stats.removed_card_value_sum
-            )
+            self._record_column_clear_stats(player.player_id, clear_stats)
             self._notify_action_selected(player, selected_action, snapshots)
         self.game_state.phase = TurnPhase.CHOOSE_DRAW
+
+    def _record_column_clear_stats(
+        self, player_id: int, clear_stats: ColumnClearStats
+    ) -> None:
+        self.last_column_clear_stats[player_id] = clear_stats
+        self.total_columns_cleared[player_id] = (
+            self.total_columns_cleared.get(player_id, 0) + clear_stats.columns_removed
+        )
+        self.total_column_clear_value_sum[player_id] = (
+            self.total_column_clear_value_sum.get(player_id, 0)
+            + clear_stats.removed_card_value_sum
+        )
 
     def _observer_snapshots(self, acting_player: Player) -> dict:
         # Deep copy: observations alias live state (e.g. the acting player's
@@ -375,13 +379,19 @@ class SkyjoGame:
             )
 
     def reset(self):
-        for player_state in self.get_all_player_states():
+        player_states = self.get_all_player_states()
+        for player, player_state in zip(self.players, player_states):
             for row in player_state.grid:
                 for card in row:
-                    card.face_up = True
+                    card.reveal()
+
+            clear_stats = self.game_state.remove_uniform_columns_to_discard_pile(
+                player_state
+            )
+            self._record_column_clear_stats(player.player_id, clear_stats)
 
         # Finish scoring and prepare for next round
-        self.game_state.finish_round_and_calculate_stats(self.get_all_player_states())
+        self.game_state.finish_round_and_calculate_stats(player_states)
 
     def play_game(
         self,

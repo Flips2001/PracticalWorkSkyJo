@@ -3,6 +3,7 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from Skyjo.src.skyjo_game import SkyjoGame
+from Skyjo.src.game_state import ColumnClearStats
 from Skyjo.src.players.player import Player
 from Skyjo.src.card import Card
 from Skyjo.src.action import Action
@@ -268,6 +269,30 @@ def test_turn_tracks_total_columns_cleared(game):
 
     assert game.total_columns_cleared[0] == 1
     assert game.total_column_clear_value_sum[0] == 36
+
+
+def test_final_reveal_removes_uniform_columns_before_scoring(two_players):
+    game, p0, p1 = two_players
+    p0_state = game.get_player_state(p0)
+    p1_state = game.get_player_state(p1)
+
+    # Player 0's first column becomes uniform only when the final hidden cards
+    # are revealed. The other columns and player 1's grid are non-uniform.
+    p0_state.grid = grid_from_values([[5, 1, 2, 3], [5, 4, 5, 6], [5, 7, 8, 9]])
+    p1_state.grid = grid_from_values([[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12]])
+
+    # Keep the complete 150-card deck invariant required by round reset.
+    game.game_state.draw_pile = [Card(0) for _ in range(126)]
+    game.game_state.discard_pile = []
+
+    game.reset()
+
+    assert game.game_state.all_player_final_scores == [45, 78]
+    assert game.last_column_clear_stats[0] == ColumnClearStats(
+        columns_removed=1, removed_card_value_sum=15
+    )
+    assert game.total_columns_cleared[0] == 1
+    assert game.total_column_clear_value_sum[0] == 15
 
 
 def test_observer_snapshots_are_frozen_at_decision_time(two_players):
