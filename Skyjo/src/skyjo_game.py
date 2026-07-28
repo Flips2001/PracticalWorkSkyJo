@@ -272,11 +272,21 @@ class SkyjoGame:
 
     def _determine_starting_player(self) -> int:
         """
-        Determine which player starts this round:
-        - Primary: highest total score of flipped cards
-        - Tie-breaker: highest individual card among flipped cards
+        Determine which player starts this round.
+
+        The first round starts with the player whose two revealed cards have
+        the highest sum, breaking ties by the highest individual card. Later
+        rounds start with the player who finished the preceding round. If a
+        preceding round had no finisher, use the first-round comparison as a fallback.
+
         Returns the index of the starting player in self.players
         """
+        if (
+            self.game_state.round_number > 1
+            and self.game_state.previous_round_finisher_id is not None
+        ):
+            return self.game_state.previous_round_finisher_id
+
         best_index = 0
         best_score = float("-inf")
         best_highest_card = float("-inf")

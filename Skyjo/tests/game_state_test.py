@@ -22,6 +22,7 @@ def test_initial_game_state(game_state):
     assert game_state.all_player_final_scores == []
     assert game_state.final_turn_phase is False
     assert game_state.phase.name == "CHOOSE_DRAW"
+    assert game_state.previous_round_finisher_id is None
 
 
 def test_create_deck(game_state):
@@ -54,6 +55,7 @@ def test_finish_round_and_calculate_stats(game_state):
     # Grids have 24 cards, so draw pile needs 150 - 24 = 126
     game_state.draw_pile = [Card(1) for _ in range(126)]
     game_state.discard_pile = []
+    game_state.first_finisher_id = 1
 
     game_state.finish_round_and_calculate_stats([player1, player2])
 
@@ -61,6 +63,7 @@ def test_finish_round_and_calculate_stats(game_state):
     assert game_state.all_player_final_scores == [50, 70]
     assert game_state.final_turn_phase is False
     assert getattr(game_state, "first_finisher_id", None) is None
+    assert game_state.previous_round_finisher_id == 1
 
 
 def test_set_final_game_scores(game_state):

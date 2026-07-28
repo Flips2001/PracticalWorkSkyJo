@@ -103,6 +103,30 @@ def test_player_state_is_owned_by_game(two_players):
     assert game.get_player_state(p0).player_id == p0.player_id
 
 
+def test_first_round_starter_is_determined_from_revealed_cards(two_players):
+    game, p0, p1 = two_players
+    game.get_player_state(p0).grid = grid_from_values(
+        [[1, 2, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]
+    )
+    game.get_player_state(p1).grid = grid_from_values(
+        [[5, 6, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]
+    )
+    game.get_player_state(p0).grid[0][0].reveal()
+    game.get_player_state(p0).grid[0][1].reveal()
+    game.get_player_state(p1).grid[0][0].reveal()
+    game.get_player_state(p1).grid[0][1].reveal()
+
+    assert game._determine_starting_player() == 1
+
+
+def test_later_round_starts_with_previous_round_finisher(two_players):
+    game, _, _ = two_players
+    game.game_state.round_number = 2
+    game.game_state.previous_round_finisher_id = 0
+
+    assert game._determine_starting_player() == 0
+
+
 def test_get_legal_actions_after_drawing_hidden(two_players):
     game, p0, _ = two_players
 
