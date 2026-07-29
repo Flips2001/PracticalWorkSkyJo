@@ -229,8 +229,12 @@ class GameState:
         if self.first_finisher_id is not None:
             first_score = round_scores[self.first_finisher_id]
             if first_score > 0:
-                # Double only if first finisher does NOT have lowest score
-                if first_score != min(round_scores):
+                # Double if another player has an equal or lower score
+                if any(
+                    score <= first_score
+                    for i, score in enumerate(round_scores)
+                    if i != self.first_finisher_id
+                ):
                     round_scores[self.first_finisher_id] *= 2
 
         for i, ps in enumerate(player_states):
