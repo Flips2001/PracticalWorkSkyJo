@@ -128,13 +128,15 @@ class SkyjoEnv(AECEnv):
             self.agent_selection = self._agent_name(player_id)
 
     def _handle_game_over(self):
-        """Assign terminal +1/-1 rewards based on who won."""
+        """Assign terminal +1/-1 rewards for a win and zero for a tie."""
         scores = self.game.game_state.all_player_final_scores
         if scores and len(scores) >= 2:
-            winner_id = scores.index(min(scores))
-            loser_id = 1 - winner_id
-            self.rewards[self._agent_name(winner_id)] += 1.0
-            self.rewards[self._agent_name(loser_id)] -= 1.0
+            if scores[0] < scores[1]:
+                self.rewards["player_0"] += 1.0
+                self.rewards["player_1"] -= 1.0
+            elif scores[1] < scores[0]:
+                self.rewards["player_1"] += 1.0
+                self.rewards["player_0"] -= 1.0
         self.terminations = {agent: True for agent in self.agents}
 
     def _check_round_reward(self):

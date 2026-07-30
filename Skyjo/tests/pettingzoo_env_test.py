@@ -30,6 +30,14 @@ def _env_with_column_clear_stats(stats: ColumnClearStats) -> SkyjoEnv:
     return env
 
 
+def _env_with_final_scores(scores: list[int]) -> SkyjoEnv:
+    env = SkyjoEnv()
+    env.game = SimpleNamespace(
+        game_state=SimpleNamespace(all_player_final_scores=scores)
+    )
+    return env
+
+
 class TestSkyjoEnvReset:
     def test_reset_sets_agents(self):
         env = SkyjoEnv()
@@ -77,6 +85,22 @@ class TestSkyjoEnvSpaces:
 
 
 class TestSkyjoEnvGameplay:
+    @pytest.mark.parametrize(
+        ("scores", "expected_rewards"),
+        [
+            ([10, 20], {"player_0": 1.0, "player_1": -1.0}),
+            ([20, 10], {"player_0": -1.0, "player_1": 1.0}),
+            ([10, 10], {"player_0": 0.0, "player_1": 0.0}),
+        ],
+    )
+    def test_terminal_rewards_match_competition_results(self, scores, expected_rewards):
+        env = _env_with_final_scores(scores)
+
+        env._handle_game_over()
+
+        assert env.rewards == expected_rewards
+        assert all(env.terminations.values())
+
     def test_step_with_legal_action(self):
         env = SkyjoEnv()
         env.reset()
