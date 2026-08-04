@@ -37,6 +37,24 @@ class TestPlayer(Player):
         )
 
 
+class RecordingActionHooks:
+    """Records game state immediately before and after each action."""
+
+    def __init__(self):
+        self.events = []
+
+    def before_action(self, game, player, action):
+        self.events.append(("before", player, action, self._hand_value(game)))
+
+    def after_action(self, game, player, action):
+        self.events.append(("after", player, action, self._hand_value(game)))
+
+    @staticmethod
+    def _hand_value(game):
+        hand_card = game.game_state.hand_card
+        return hand_card.get_value() if hand_card is not None else None
+
+
 def grid_from_values(values):
     return [[Card(v) for v in row] for row in values]
 
@@ -227,6 +245,64 @@ def test_turn_executes_full_plan_and_resets_phase(game):
     assert any(card.face_up for row in p0_state.grid for card in row)
 
 
+def test_turn_only_builds_acting_player_observations_without_hooks(game, monkeypatch):
+    p0 = TestPlayer(
+        0,
+        "P0",
+        plan=[
+            Action(ActionType.DRAW_HIDDEN_CARD),
+            Action(ActionType.SWAP_CARD, pos=(0, 0)),
+        ],
+    )
+    p1 = TestPlayer(1, "P1", plan=[])
+    game.add_player(p0)
+    game.add_player(p1)
+    game.game_state.draw_pile = [Card(7)]
+    game.game_state.phase = TurnPhase.CHOOSE_DRAW
+
+    observed_player_ids = []
+    get_observation = game.get_observation
+
+    def counting_get_observation(player):
+        observed_player_ids.append(player.player_id)
+        return get_observation(player)
+
+    monkeypatch.setattr(game, "get_observation", counting_get_observation)
+
+    game.turn(p0)
+
+    assert observed_player_ids == [p0.player_id, p0.player_id]
+
+
+def test_turn_calls_action_hooks_before_and_after_each_action():
+    hooks = RecordingActionHooks()
+    game = SkyjoGame(action_hooks=hooks)
+    p0 = TestPlayer(
+        0,
+        "P0",
+        plan=[
+            Action(ActionType.DRAW_HIDDEN_CARD),
+            Action(ActionType.SWAP_CARD, pos=(0, 0)),
+        ],
+    )
+    p1 = TestPlayer(1, "P1", plan=[])
+    game.add_player(p0)
+    game.add_player(p1)
+    game.game_state.draw_pile = [Card(7)]
+    game.game_state.phase = TurnPhase.CHOOSE_DRAW
+
+    game.turn(p0)
+
+    draw_action = Action(ActionType.DRAW_HIDDEN_CARD)
+    swap_action = Action(ActionType.SWAP_CARD, pos=(0, 0))
+    assert hooks.events == [
+        ("before", p0, draw_action, None),
+        ("after", p0, draw_action, 7),
+        ("before", p0, swap_action, 7),
+        ("after", p0, swap_action, None),
+    ]
+
+
 def test_turn_tracks_total_columns_cleared(game):
     plan = [
         Action(ActionType.DRAW_OPEN_CARD),
@@ -293,17 +369,3 @@ def test_final_reveal_removes_uniform_columns_before_scoring(two_players):
     )
     assert game.total_columns_cleared[0] == 1
     assert game.total_column_clear_value_sum[0] == 15
-
-
-def test_observer_snapshots_are_frozen_at_decision_time(two_players):
-    game, p0, p1 = two_players
-    p0_state = game.get_player_state(p0)
-    p0_state.grid = grid_from_values([[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12]])
-
-    snapshot = game._observer_snapshots(p0)[p1.player_id]
-
-    # The acting player's grid mutates after the snapshot was taken; the
-    # snapshot's view of it must not change with it.
-    p0_state.grid[0][0].reveal()
-
-    assert snapshot.opponent_cards[p0.player_id][0][0].face_up is False

@@ -1,10 +1,10 @@
-import copy
 import logging
 from collections import Counter
 
 from Skyjo.src.action import Action
 from Skyjo.src.action_type import ActionType
 from Skyjo.src.card import Card
+from Skyjo.src.game_action_hooks import GameActionHooks
 from Skyjo.src.game_state import ColumnClearStats, GameState
 from Skyjo.src.observation import Observation
 from Skyjo.src.player_state import PlayerState
@@ -26,8 +26,9 @@ MAX_TURNS_PER_ROUND = 300
 
 
 class SkyjoGame:
-    def __init__(self):
+    def __init__(self, action_hooks: Optional[GameActionHooks] = None):
         self.game_state = GameState()
+        self.action_hooks = action_hooks
         self.players: List[Player] = []
         self.player_states: dict[int, PlayerState] = {}
         self.num_players = 0
@@ -87,7 +88,7 @@ class SkyjoGame:
 
         return Observation(
             player_id=player.player_id,
-            card_grid=copy.deepcopy(self.get_player_state(player).get_grid()),
+            card_grid=self.get_player_state(player).get_grid(),
             scores=self.get_players_scores(),
             hand_card=self.game_state.hand_card,
             opponent_cards=self.get_opponent_players_cards(player),
@@ -99,7 +100,7 @@ class SkyjoGame:
             draw_pile_size=len(self.game_state.draw_pile),
             turn_phase=self.game_state.phase,
             draw_pile_value_counts=self._get_draw_pile_value_counts(),
-            total_scores=list(self.game_state.all_player_final_scores),
+            total_scores=self.game_state.all_player_final_scores,
             final_turn_phase=self.game_state.final_turn_phase,
             first_finisher_id=self.game_state.first_finisher_id,
         )
@@ -259,9 +260,11 @@ class SkyjoGame:
                     )
                     break
                 action = player.select_action(observation, legal_actions)
-                snapshots = self._observer_snapshots(player)
+                if self.action_hooks is not None:
+                    self.action_hooks.before_action(self, player, action)
                 self.execute_action(player, action)
-                self._notify_action_selected(player, action, snapshots)
+                if self.action_hooks is not None:
+                    self.action_hooks.after_action(self, player, action)
 
         self.game_state.phase = TurnPhase.CHOOSE_DRAW
 
@@ -331,15 +334,15 @@ class SkyjoGame:
             selected_action = player.select_action(
                 observation=observation, legal_actions=legal_actions
             )
-            # Snapshot the observers' views before executing: the action's
-            # explanation refers to the decision-time state.
-            snapshots = self._observer_snapshots(player)
+            if self.action_hooks is not None:
+                self.action_hooks.before_action(self, player, selected_action)
             self.execute_action(player, selected_action)
             clear_stats = self.game_state.remove_uniform_columns_to_discard_pile(
                 self.get_player_state(player)
             )
             self._record_column_clear_stats(player.player_id, clear_stats)
-            self._notify_action_selected(player, selected_action, snapshots)
+            if self.action_hooks is not None:
+                self.action_hooks.after_action(self, player, selected_action)
         self.game_state.phase = TurnPhase.CHOOSE_DRAW
 
     def _record_column_clear_stats(
@@ -353,30 +356,6 @@ class SkyjoGame:
             self.total_column_clear_value_sum.get(player_id, 0)
             + clear_stats.removed_card_value_sum
         )
-
-    def _observer_snapshots(self, acting_player: Player) -> dict:
-        # Deep copy: observations alias live state (e.g. the acting player's
-        # grid), and snapshots must stay frozen at decision time.
-        return {
-            observer.player_id: copy.deepcopy(self.get_observation(observer))
-            for observer in self.players
-            if observer.player_id != acting_player.player_id
-        }
-
-    def _notify_action_selected(
-        self, player: Player, action: Action, snapshots: dict
-    ) -> None:
-        explanation = getattr(player, "last_explanation", None)
-        for observer in self.players:
-            if observer.player_id == player.player_id:
-                continue
-            observer.observe_action(
-                player,
-                action,
-                explanation,
-                observation=self.get_observation(observer),
-                snapshot=snapshots.get(observer.player_id),
-            )
 
     def reset(self):
         player_states = self.get_all_player_states()

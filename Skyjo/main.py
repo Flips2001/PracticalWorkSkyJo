@@ -7,6 +7,7 @@ import logging
 from Skyjo.src.players.rl_player import RLPlayer
 from Skyjo.src.players.terminal_player import TerminalPlayer
 from Skyjo.src.skyjo_game import SkyjoGame
+from Skyjo.src.ui.terminal_game_ui import TerminalGameUI
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,13 @@ def run_game(stdscr):
 
     model_path = get_model_path()
 
-    game = SkyjoGame()
+    terminal_ui = TerminalGameUI(
+        stdscr=stdscr,
+        player_id=1,
+        player_name="You",
+        opponent_name="RL Player",
+    )
+    game = SkyjoGame(action_hooks=terminal_ui)
     player1 = RLPlayer(
         player_id=0,
         player_name="RL Player",
@@ -45,8 +52,7 @@ def run_game(stdscr):
     player2 = TerminalPlayer(
         player_id=1,
         player_name="You",
-        stdscr=stdscr,
-        opponent_name="RL Player",
+        ui=terminal_ui,
     )
     game.add_player(player1)
     game.add_player(player2)
@@ -57,12 +63,12 @@ def run_game(stdscr):
             scores = g.game_state.all_player_final_scores
             names = [p.player_name for p in g.players]
             round_num = g.game_state.round_number - 1
-            player2.show_round_summary(scores, names, round_num)
+            terminal_ui.show_round_summary(scores, names, round_num)
 
         def on_game_over(g):
             final_scores = g.game_state.all_player_final_scores
             names = [p.player_name for p in g.players]
-            player2.show_game_over(final_scores, names)
+            terminal_ui.show_game_over(final_scores, names)
 
         game.play_game(on_round_end=on_round_end, on_game_over=on_game_over)
 

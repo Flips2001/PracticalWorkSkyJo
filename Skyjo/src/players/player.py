@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 
 from Skyjo.src.action import Action
 from Skyjo.src.observation import Observation
-from typing import Any, List, Optional
+from typing import List
 
 
 class Player(ABC):
@@ -27,21 +27,6 @@ class Player(ABC):
         :return: Selected action
         """
         pass
-
-    def observe_action(
-        self,
-        acting_player: "Player",
-        action: Action,
-        explanation: Any = None,
-        observation: Optional[Observation] = None,
-        snapshot: Optional[Observation] = None,
-    ) -> None:
-        """Receive optional notification after another player's action.
-
-        `observation` is the observer's current (post-action) view; `snapshot`
-        is their view at decision time, matching the action's explanation.
-        """
-        return None
 
     def __str__(self):
         return f"Player {self.player_id}: {self.player_name}"
