@@ -42,7 +42,7 @@ def _observation(top_left_value=None):
         discard_top=Card(5, face_up=True),
         draw_pile_size=100,
         turn_phase=TurnPhase.CHOOSE_DRAW,
-        draw_pile_value_counts=[5] + [10] * 14,
+        discard_pile_value_counts=[5] + [10] * 14,
         total_scores=[3, 7],
     )
 
@@ -56,7 +56,10 @@ def _explanation(scale=1.0):
         ),
         UnitAttribution("discard 5", 0.6 * scale, group="discard"),
         UnitAttribution(
-            "remaining -2s in deck", -0.3 * scale, group="deck", card_value=-2
+            "-2s in discard pile",
+            -0.3 * scale,
+            group="discard_counts",
+            card_value=-2,
         ),
         UnitAttribution(
             "your hidden card at R1C1",
@@ -131,8 +134,8 @@ def test_heatmap_is_painted_on_snapshot_not_live_board():
         _pair(3) | curses.A_BOLD,
         _pair(HEAT_PAIR_BASE + 4) | curses.A_BOLD,
     ]
-    # Deck -2 count: live plain, snapshot tinted (0.3/0.9 → level 2). The
-    # dim entries are the value-header "5" of each block's deck panel.
+    # Discard-pile -2 count: live plain, snapshot tinted (0.3/0.9 → level 2).
+    # The dim entries are the value-header "5" of each block's count panel.
     assert _attrs_of(calls, "  5") == [
         _pair(0),
         curses.A_DIM,
@@ -141,7 +144,7 @@ def test_heatmap_is_painted_on_snapshot_not_live_board():
     ]
 
     texts = [rendered for _, _, rendered, _ in calls]
-    assert texts.count("Deck:") == 2
+    assert texts.count("Discard counts:") == 2
     assert any(text.startswith("influence:") for text in texts)
     assert not any(text.startswith(("toward ", "against ")) for text in texts)
 
@@ -151,7 +154,7 @@ def test_render_game_without_explanation_has_no_analysis_block():
 
     texts = [rendered for _, _, rendered, _ in calls]
     assert "Integrated Gradients" not in texts
-    assert texts.count("Deck:") == 1
+    assert texts.count("Discard counts:") == 1
     assert _attrs_of(calls, "  3 ") == [_pair(2) | curses.A_BOLD]
 
 

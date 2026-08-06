@@ -99,15 +99,16 @@ class SkyjoGame:
             ),
             draw_pile_size=len(self.game_state.draw_pile),
             turn_phase=self.game_state.phase,
-            draw_pile_value_counts=self._get_draw_pile_value_counts(),
+            discard_pile_value_counts=self._get_discard_pile_value_counts(),
             total_scores=self.game_state.all_player_final_scores,
             final_turn_phase=self.game_state.final_turn_phase,
             first_finisher_id=self.game_state.first_finisher_id,
         )
 
-    def _get_draw_pile_value_counts(self) -> List[int]:
+    def _get_discard_pile_value_counts(self) -> List[int]:
+        """Count values currently in the public discard pile."""
         value_counts = Counter(
-            card._get_value_for_engine() for card in self.game_state.draw_pile
+            card.get_value() for card in self.game_state.discard_pile
         )
         return [value_counts.get(value, 0) for value in _CARD_VALUES]
 

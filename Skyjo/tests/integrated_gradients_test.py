@@ -13,7 +13,7 @@ from Skyjo.src.rl.encoding import (
     CARD_VALUES,
     OBS_SIZE,
     encode_observation,
-    expected_card_value,
+    initial_expected_card_value,
     normalize_card_value,
 )
 from Skyjo.src.rl.integrated_gradients import (
@@ -54,7 +54,7 @@ def _hidden_grid(cols=4):
     return [[Card(0, face_up=False) for _ in range(cols)] for _ in range(3)]
 
 
-def _observation(draw_pile_value_counts=None):
+def _observation(discard_pile_value_counts=None):
     return Observation(
         player_id=0,
         card_grid=_hidden_grid(),
@@ -64,7 +64,7 @@ def _observation(draw_pile_value_counts=None):
         discard_top=Card(5, face_up=True),
         draw_pile_size=100,
         turn_phase=TurnPhase.CHOOSE_DRAW,
-        draw_pile_value_counts=draw_pile_value_counts or [0] * 15,
+        discard_pile_value_counts=discard_pile_value_counts or [0] * 15,
     )
 
 
@@ -102,20 +102,18 @@ def test_blindfold_baseline_erases_card_knowledge():
     observation = replace(observation, hand_card=Card(-1, face_up=True))
 
     baseline = build_blindfold_baseline(observation)
-    expected = normalize_card_value(
-        expected_card_value(observation.draw_pile_value_counts)
-    )
+    expected = normalize_card_value(initial_expected_card_value())
 
     # Grids hidden.
     assert baseline[:48] == pytest.approx(np.zeros(48))
     # Discard and hand exist publicly: presence kept, value erased to the
-    # expected remaining-deck card.
+    # initial deck's expected card.
     assert baseline[48] == pytest.approx(expected)
     assert baseline[49] == pytest.approx(1.0)
     assert baseline[50] == pytest.approx(expected)
     assert baseline[51] == pytest.approx(1.0)
-    # Deck counts revert to the full deck: nothing seen yet.
-    assert baseline[60:] == pytest.approx(np.ones(len(CARD_VALUES)))
+    # Discard-pile value counts are erased with the other card knowledge.
+    assert baseline[60:] == pytest.approx(np.zeros(len(CARD_VALUES)))
 
 
 def test_blindfold_baseline_keeps_absent_hand_absent():
@@ -208,8 +206,8 @@ def test_explain_action_attributes_card_units_not_context():
     assert not any("phase" in label for label in by_label)
     # Hidden cards have zero delta and therefore exactly zero attribution.
     assert by_label["your hidden card at R1C1"].attribution == 0.0
-    # Deck counts differ from the full-deck baseline and get attributed.
-    assert "remaining -2s in deck" in by_label
+    # Discard-pile count units are available for attribution.
+    assert "-2s in discard pile" in by_label
 
 
 def test_explanation_lookup_helpers_for_ui():
@@ -228,7 +226,7 @@ def test_explanation_lookup_helpers_for_ui():
     assert explanation.max_abs_attribution > 0
     assert explanation.unit_for("discard").label == "discard 5"
     assert explanation.unit_for("hand") is None
-    assert set(explanation.deck_map()) == set(CARD_VALUES)
+    assert set(explanation.discard_pile_map()) == set(CARD_VALUES)
 
 
 def test_grid_map_covers_all_cells_for_colouring():

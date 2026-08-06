@@ -35,7 +35,7 @@ def _make_obs(**kwargs):
         discard_top=None,
         draw_pile_size=100,
         turn_phase=TurnPhase.CHOOSE_DRAW,
-        draw_pile_value_counts=None,
+        discard_pile_value_counts=None,
     )
     defaults.update(kwargs)
     return Observation(**defaults)
@@ -151,17 +151,17 @@ class TestEncodeObservation:
         vec = encode_observation(obs)
         assert vec[59] == pytest.approx(0.0)
 
-    def test_draw_pile_value_counts_absent(self):
-        obs = _make_obs(draw_pile_value_counts=None)
+    def test_discard_pile_value_counts_absent(self):
+        obs = _make_obs(discard_pile_value_counts=None)
         vec = encode_observation(obs)
         assert np.allclose(vec[60:75], 0.0)
 
-    def test_draw_pile_value_counts_encoded(self):
+    def test_discard_pile_value_counts_encoded(self):
         counts = [0] * 15
-        counts[0] = 5  # value -2 (max 5)
-        counts[2] = 9  # value 0 (max 15)
-        counts[14] = 5  # value 12 (max 10)
-        obs = _make_obs(draw_pile_value_counts=counts)
+        counts[0] = 5  # value -2 (all 5 copies)
+        counts[2] = 9  # value 0 (9 of 15 copies)
+        counts[14] = 5  # value 12 (5 of 10 copies)
+        obs = _make_obs(discard_pile_value_counts=counts)
         vec = encode_observation(obs)
 
         assert vec[60] == pytest.approx(1.0)

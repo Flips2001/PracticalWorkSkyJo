@@ -4,7 +4,7 @@ Provides a full-screen, color-coded game display with in-place updates.
 
 Attribution display: the live board is always rendered clean. The RL
 opponent's last move is explained in a separate analysis block on the right —
-a frozen copy of the decision-time state (grids, discard, hand, deck counts,
+a frozen copy of the decision-time state (grids, discard, hand, discard counts,
 scores) with a heatmap overlay from green (little influence) to red (much
 influence), normalized to the strongest unit of that move. Snapshot and
 heatmap therefore always describe the same board, even while the live game
@@ -36,8 +36,8 @@ HEAT_PAIR_BASE = 11
 _HEAT_COLORS_256 = (40, 118, 226, 214, 202, 196)
 _HEAT_COLORS_8 = (curses.COLOR_GREEN, curses.COLOR_YELLOW, curses.COLOR_RED)
 
-# Card values in the order of Observation.draw_pile_value_counts.
-_DECK_VALUES = tuple(range(-2, 13))
+# Card values in the order of Observation.discard_pile_value_counts.
+_CARD_VALUES = tuple(range(-2, 13))
 
 # Layout: opponent grid offset within a state block, analysis block column.
 _OPPONENT_GRID_OFFSET = 38
@@ -91,7 +91,7 @@ class _Heat:
             True: explanation.grid_map("opponent") if explanation else {},
             False: explanation.grid_map("own") if explanation else {},
         }
-        self._deck = explanation.deck_map() if explanation else {}
+        self._discard_pile = explanation.discard_pile_map() if explanation else {}
 
     def _tint(self, unit) -> int:
         if unit is None or self._max <= 0:
@@ -101,8 +101,8 @@ class _Heat:
     def cell(self, viewer_grid: bool, pos) -> int:
         return self._tint(self._cells[viewer_grid].get(pos))
 
-    def deck(self, card_value: int) -> int:
-        return self._tint(self._deck.get(card_value))
+    def discard_pile(self, card_value: int) -> int:
+        return self._tint(self._discard_pile.get(card_value))
 
     def unit(self, group: str) -> int:
         if self._explanation is None:
@@ -263,7 +263,7 @@ class TerminalRenderer:
         self._render_game_info(row, col, observation, heat)
         row += 2
 
-        self._render_deck_panel(row, col, observation, heat)
+        self._render_discard_counts_panel(row, col, observation, heat)
         row += 3
 
         if observation.total_scores:
@@ -422,27 +422,27 @@ class TerminalRenderer:
                 curses.color_pair(COLOR_DEFAULT) | curses.A_DIM,
             )
 
-    def _render_deck_panel(
+    def _render_discard_counts_panel(
         self, row: int, col: int, observation: Observation, heat: _Heat
     ):
-        """Render remaining draw-pile counts per card value, heat-tinted."""
-        counts = observation.draw_pile_value_counts
+        """Render current discard-pile counts per card value, heat-tinted."""
+        counts = observation.discard_pile_value_counts
         if not counts:
             return
 
-        self._safe_addstr(row, col, "Deck:", curses.color_pair(COLOR_TITLE))
+        self._safe_addstr(row, col, "Discard counts:", curses.color_pair(COLOR_TITLE))
         self._safe_addstr(
             row + 1, col, "left:", curses.color_pair(COLOR_DEFAULT) | curses.A_DIM
         )
-        x = col + 6
-        for value, count in zip(_DECK_VALUES, counts):
+        x = col + 16
+        for value, count in zip(_CARD_VALUES, counts):
             self._safe_addstr(
                 row,
                 x,
                 f"{value:3d}",
                 curses.color_pair(COLOR_DEFAULT) | curses.A_DIM,
             )
-            tint = heat.deck(value)
+            tint = heat.discard_pile(value)
             self._safe_addstr(
                 row + 1, x, f"{count:3d}", tint or curses.color_pair(COLOR_DEFAULT)
             )

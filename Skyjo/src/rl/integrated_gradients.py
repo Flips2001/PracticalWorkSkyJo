@@ -1,7 +1,7 @@
 """Integrated-gradients explanations for RL moves.
 
 The baseline is the same public situation with all card knowledge erased:
-cards hidden, deck counts at "nothing seen". Phase, draw-pile size, round
+cards hidden and discard-pile counts empty. Phase, draw-pile size, round
 flags and removed columns are public regardless of card knowledge, so they
 are copied from the observation and cancel.
 Attributions therefore answer: how much did each piece of card knowledge
@@ -12,7 +12,7 @@ Discard and hand cards are the exception: their *existence* is public (the
 phase implies it) and the encoding has no "present but unknown" state for
 them, so erasing them to absent would put the baseline on impossible states
 the policy never trained on and inflate their attributions. When present,
-they are instead erased to the expected value of the remaining deck —
+they are instead erased to the initial deck's expected value —
 "an unremarkable card is there".
 
 Value and revealed-flag features are summed per card: normalize(-2) == 0.0,
@@ -37,7 +37,7 @@ from Skyjo.src.rl.encoding import (
     GRID_ROWS,
     OBS_SIZE,
     encode_observation,
-    expected_card_value,
+    initial_expected_card_value,
     normalize_card_value,
 )
 
@@ -49,11 +49,11 @@ _OWN_GRID_OFFSET = 0
 _OPPONENT_GRID_OFFSET = 24
 _DISCARD_INDEX = 48
 _HAND_INDEX = 50
-_DECK_COUNTS_OFFSET = 60
+_DISCARD_PILE_COUNTS_OFFSET = 60
 
 # Public context regardless of card knowledge: phase one-hot, draw-pile size,
 # final-turn and first-finisher flags.
-_PUBLIC_CONTEXT_INDICES = tuple(range(52, _DECK_COUNTS_OFFSET))
+_PUBLIC_CONTEXT_INDICES = tuple(range(52, _DISCARD_PILE_COUNTS_OFFSET))
 
 
 @dataclass(frozen=True)
@@ -62,10 +62,10 @@ class UnitAttribution:
 
     label: str
     attribution: float
-    group: str  # "cell" | "discard" | "hand" | "deck"
+    group: str  # "cell" | "discard" | "hand" | "discard_counts"
     owner: Optional[str] = None
     pos: Optional[GridPos] = None
-    card_value: Optional[int] = None  # deck units: which card value
+    card_value: Optional[int] = None  # discard-count units: which card value
 
     @property
     def abs_attribution(self) -> float:
@@ -101,8 +101,12 @@ class ActionExplanation:
                 return unit
         return None
 
-    def deck_map(self) -> Dict[int, UnitAttribution]:
-        return {unit.card_value: unit for unit in self.units if unit.group == "deck"}
+    def discard_pile_map(self) -> Dict[int, UnitAttribution]:
+        return {
+            unit.card_value: unit
+            for unit in self.units
+            if unit.group == "discard_counts"
+        }
 
     def grid_map(self, owner: str) -> Dict[GridPos, UnitAttribution]:
         return {
@@ -116,14 +120,11 @@ def build_blindfold_baseline(observation: Observation) -> np.ndarray:
     """Erase all card knowledge, keep the public situation.
 
     Present discard/hand cards keep their presence flag (public structure)
-    and get the expected remaining-deck value; see the module docstring.
+    and get the initial deck's expected value; see the module docstring.
     """
     baseline = np.zeros(OBS_SIZE, dtype=np.float32)
-    baseline[_DECK_COUNTS_OFFSET:] = 1.0  # full deck: nothing seen yet
 
-    expected = normalize_card_value(
-        expected_card_value(observation.draw_pile_value_counts)
-    )
+    expected = normalize_card_value(initial_expected_card_value())
     for index, card in (
         (_DISCARD_INDEX, observation.discard_top),
         (_HAND_INDEX, observation.hand_card),
@@ -315,9 +316,9 @@ def _build_units(
     for offset, value in enumerate(CARD_VALUES):
         units.append(
             UnitAttribution(
-                label=f"remaining {value}s in deck",
-                attribution=float(attributions[_DECK_COUNTS_OFFSET + offset]),
-                group="deck",
+                label=f"{value}s in discard pile",
+                attribution=float(attributions[_DISCARD_PILE_COUNTS_OFFSET + offset]),
+                group="discard_counts",
                 card_value=value,
             )
         )

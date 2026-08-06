@@ -61,7 +61,7 @@ class Observation:
     discard_top: Optional[ObservedCard]
     draw_pile_size: int
     turn_phase: TurnPhase
-    draw_pile_value_counts: Optional[tuple[int, ...]] = None
+    discard_pile_value_counts: Optional[tuple[int, ...]] = None
     total_scores: tuple[int, ...] = ()
     final_turn_phase: bool = False
     first_finisher_id: Optional[int] = None
@@ -80,9 +80,9 @@ class Observation:
         )
         object.__setattr__(self, "scores", tuple(self.scores))
         object.__setattr__(self, "total_scores", tuple(self.total_scores or ()))
-        if self.draw_pile_value_counts is not None:
+        if self.discard_pile_value_counts is not None:
             object.__setattr__(
                 self,
-                "draw_pile_value_counts",
-                tuple(self.draw_pile_value_counts),
+                "discard_pile_value_counts",
+                tuple(self.discard_pile_value_counts),
             )

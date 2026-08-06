@@ -13,7 +13,7 @@ Each grid slot is encoded as a (value, is_revealed) pair:
 
 import numpy as np
 from gymnasium import spaces
-from typing import Optional, Sequence
+from typing import Optional
 
 from Skyjo.src.observation import Observation, ObservedCard
 from Skyjo.src.turn_phase import TurnPhase
@@ -55,13 +55,8 @@ def normalize_card_value(value: float) -> float:
     return (value + 2) / 14.0
 
 
-def expected_card_value(draw_pile_value_counts: Optional[Sequence[int]]) -> float:
-    if draw_pile_value_counts is not None:
-        counts = np.asarray(draw_pile_value_counts, dtype=np.float32)
-        if counts.shape == (len(CARD_VALUES),) and float(counts.sum()) > 0:
-            values = np.asarray(CARD_VALUES, dtype=np.float32)
-            return float(np.dot(values, counts) / counts.sum())
-
+def initial_expected_card_value() -> float:
+    """Expected card value before incorporating any public observations."""
     total_cards = sum(INITIAL_CARD_COUNTS.values())
     return (
         sum(value * count for value, count in INITIAL_CARD_COUNTS.items()) / total_cards
@@ -97,16 +92,18 @@ def _encode_grid(
                 obs_vec[idx + 1] = 1.0
 
 
-def _encode_draw_pile_value_counts(obs: Observation, obs_vec: np.ndarray, offset: int):
-    """Encode normalized remaining count per value for draw pile cards (-2..12)."""
-    if not obs.draw_pile_value_counts:
+def _encode_discard_pile_value_counts(
+    obs: Observation, obs_vec: np.ndarray, offset: int
+):
+    """Encode current discard-pile counts relative to each initial count."""
+    if not obs.discard_pile_value_counts:
         return
 
     for i, value in enumerate(CARD_VALUES):
-        if i >= len(obs.draw_pile_value_counts):
+        if i >= len(obs.discard_pile_value_counts):
             break
         initial_count = INITIAL_CARD_COUNTS[value]
-        obs_vec[offset + i] = obs.draw_pile_value_counts[i] / float(initial_count)
+        obs_vec[offset + i] = obs.discard_pile_value_counts[i] / float(initial_count)
 
 
 def encode_observation(obs: Observation) -> np.ndarray:
@@ -123,8 +120,8 @@ def encode_observation(obs: Observation) -> np.ndarray:
       57:    Draw pile size / 150
       58:    Final turn flag
       59:    Is first finisher flag
-      60-74: Remaining draw-pile card counts per value -2..12,
-             normalized by initial deck counts for each value
+      60-74: Current discard-pile counts per value -2..12,
+             normalized by each value's initial deck count
     """
     vec = np.zeros(OBS_SIZE, dtype=np.float32)
 
@@ -166,8 +163,8 @@ def encode_observation(obs: Observation) -> np.ndarray:
         else 0.0
     )
 
-    # Draw-pile card value distribution (60-74)
-    _encode_draw_pile_value_counts(obs, vec, 60)
+    # Current discard-pile value counts (60-74)
+    _encode_discard_pile_value_counts(obs, vec, 60)
 
     return vec
 

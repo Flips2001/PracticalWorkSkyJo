@@ -1,5 +1,6 @@
 from dataclasses import FrozenInstanceError
 
+import numpy as np
 import pytest
 
 from Skyjo.src.skyjo_game import SkyjoGame
@@ -9,6 +10,7 @@ from Skyjo.src.card import Card
 from Skyjo.src.action import Action
 from Skyjo.src.action_type import ActionType
 from Skyjo.src.turn_phase import TurnPhase
+from Skyjo.src.rl.encoding import encode_observation
 
 
 class TestPlayer(Player):
@@ -113,6 +115,44 @@ def test_get_observation_basic_fields_and_immutability(two_players):
     p0_state.grid[0][0].reveal()
     assert obs.card_grid[0][0].is_hidden()
     assert not p0_state.grid[0][0].is_hidden()
+
+
+def test_observation_is_independent_of_hidden_draw_pile_values(two_players):
+    game, p0, _ = two_players
+    game.game_state.discard_pile = [
+        Card(5, face_up=True),
+        Card(-2, face_up=True),
+    ]
+
+    game.game_state.draw_pile = [Card(-2), Card(-2)]
+    low_hidden_cards = game.get_observation(p0)
+
+    game.game_state.draw_pile = [Card(12), Card(12)]
+    high_hidden_cards = game.get_observation(p0)
+
+    assert (
+        low_hidden_cards.discard_pile_value_counts
+        == high_hidden_cards.discard_pile_value_counts
+    )
+    assert np.array_equal(
+        encode_observation(low_hidden_cards), encode_observation(high_hidden_cards)
+    )
+
+
+def test_discard_counts_forget_cards_moved_into_draw_pile(two_players):
+    game, p0, _ = two_players
+    game.game_state.draw_pile = []
+    game.game_state.discard_pile = [
+        Card(3, face_up=True),
+        Card(7, face_up=True),
+        Card(3, face_up=True),
+    ]
+
+    game.game_state._rebuild_draw_pile_from_discard()
+    observation = game.get_observation(p0)
+
+    assert sum(observation.discard_pile_value_counts) == 1
+    assert observation.discard_pile_value_counts[5] == 1  # value 3 remains on top
 
 
 def test_player_state_is_owned_by_game(two_players):
