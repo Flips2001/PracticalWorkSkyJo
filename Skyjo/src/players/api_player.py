@@ -25,8 +25,7 @@ from typing import List, Optional, Tuple
 
 from Skyjo.src.action import Action
 from Skyjo.src.action_type import ActionType
-from Skyjo.src.card import Card
-from Skyjo.src.observation import Observation
+from Skyjo.src.observation import Observation, ObservedCard
 from Skyjo.src.players.player import Player
 from Skyjo.src.turn_phase import TurnPhase
 
@@ -101,7 +100,7 @@ def _api_pos_to_local(api_pos: int) -> Tuple[int, int]:
 
 
 def _card_grid_to_api_board(
-    card_grid: Optional[List[List[Optional[Card]]]],
+    card_grid: Optional[tuple[tuple[ObservedCard, ...], ...]],
 ) -> dict:
     """Convert a local 3xN grid to the API's 12-slot board dict."""
     cards = [0] * BOARD_SIZE
@@ -118,7 +117,7 @@ def _card_grid_to_api_board(
                 removed[api_pos] = True
                 continue
             card = row_cards[col_idx]
-            cards[api_pos] = int(card.value)
+            cards[api_pos] = int(card.get_value()) if card.face_up else 0
             visible[api_pos] = bool(card.face_up)
     return {"cards": cards, "visible": visible, "removed": removed}
 
@@ -226,7 +225,9 @@ class ApiPlayer(Player):
 
         if phase == TurnPhase.HAVE_DRAWN_OPEN:
             # Drew from discard – must swap into grid.
-            drawn_value = observation.hand_card.value if observation.hand_card else 0
+            drawn_value = (
+                observation.hand_card.get_value() if observation.hand_card else 0
+            )
             return self._handle_choose_position(
                 state,
                 observation,
@@ -241,7 +242,7 @@ class ApiPlayer(Player):
         if phase == TurnPhase.HAVE_TO_FLIP_AFTER_DISCARD:
             # The drawn card was discarded; flip a hidden card.
             drawn_value = (
-                observation.discard_top.value if observation.discard_top else 0
+                observation.discard_top.get_value() if observation.discard_top else 0
             )
             return self._handle_choose_position(
                 state,
@@ -281,7 +282,9 @@ class ApiPlayer(Player):
         observation: Observation,
         legal_actions: List[Action],
     ) -> Action:
-        drawn_value = observation.hand_card.value if observation.hand_card else None
+        drawn_value = (
+            observation.hand_card.get_value() if observation.hand_card else None
+        )
         ctx = self._make_context(
             observation.player_id,
             _PHASE_KEEP_OR_DISCARD,
@@ -379,7 +382,7 @@ class ApiPlayer(Player):
 
         discard_pile: List[int] = []
         if observation.discard_top is not None:
-            discard_pile = [int(observation.discard_top.value)]
+            discard_pile = [int(observation.discard_top.get_value())]
 
         pending_final: List[int] = []
         round_ender: Optional[int] = None

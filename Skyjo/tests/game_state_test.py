@@ -22,6 +22,7 @@ def test_initial_game_state(game_state):
     assert game_state.all_player_final_scores == []
     assert game_state.final_turn_phase is False
     assert game_state.phase.name == "CHOOSE_DRAW"
+    assert game_state.previous_round_finisher_id is None
 
 
 def test_create_deck(game_state):
@@ -29,7 +30,7 @@ def test_create_deck(game_state):
     assert len(deck) == 150  # 10 x (-1 to 12) + 5 x -2 + 15 x 0
     value_counts = {value: 0 for value in range(-2, 13)}
     for card in deck:
-        value_counts[card.value] += 1
+        value_counts[card._get_value_for_engine()] += 1
 
     for value in range(1, 13):
         assert value_counts[value] == 10
@@ -54,6 +55,7 @@ def test_finish_round_and_calculate_stats(game_state):
     # Grids have 24 cards, so draw pile needs 150 - 24 = 126
     game_state.draw_pile = [Card(1) for _ in range(126)]
     game_state.discard_pile = []
+    game_state.first_finisher_id = 1
 
     game_state.finish_round_and_calculate_stats([player1, player2])
 
@@ -61,6 +63,7 @@ def test_finish_round_and_calculate_stats(game_state):
     assert game_state.all_player_final_scores == [50, 70]
     assert game_state.final_turn_phase is False
     assert getattr(game_state, "first_finisher_id", None) is None
+    assert game_state.previous_round_finisher_id == 1
 
 
 def test_set_final_game_scores(game_state):
@@ -125,12 +128,12 @@ def test_remove_uniform_columns_to_discard_pile_one_clear(game_state):
 
     assert stats == ColumnClearStats(columns_removed=1, removed_card_value_sum=9)
     assert [len(row) for row in player_state.grid] == [3, 3, 3]
-    assert [[card.value for card in row] for row in player_state.grid] == [
+    assert [[card.get_value() for card in row] for row in player_state.grid] == [
         [4, 5, 6],
         [8, 9, 10],
         [0, 1, 2],
     ]
-    assert [card.value for card in game_state.discard_pile] == [3, 3, 3]
+    assert [card.get_value() for card in game_state.discard_pile] == [3, 3, 3]
 
 
 def test_remove_uniform_columns_to_discard_pile_multiple_clears(game_state):
@@ -146,12 +149,12 @@ def test_remove_uniform_columns_to_discard_pile_multiple_clears(game_state):
     stats = game_state.remove_uniform_columns_to_discard_pile(player_state)
 
     assert stats == ColumnClearStats(columns_removed=2, removed_card_value_sum=36)
-    assert [[card.value for card in row] for row in player_state.grid] == [
+    assert [[card.get_value() for card in row] for row in player_state.grid] == [
         [4, 6],
         [8, 10],
         [0, 2],
     ]
-    assert [card.value for card in game_state.discard_pile] == [7, 7, 7, 5, 5, 5]
+    assert [card.get_value() for card in game_state.discard_pile] == [7, 7, 7, 5, 5, 5]
 
 
 def test_misspelled_column_removal_api_is_removed(game_state):
@@ -237,7 +240,10 @@ def test_rebuild_draw_pile_from_discard(game_state):
     assert len(game_state.draw_pile) == 19
     # Discard pile keeps only the top card
     assert len(game_state.discard_pile) == 1
-    assert game_state.discard_pile[0].value == top_card.value
+    assert (
+        game_state.discard_pile[0]._get_value_for_engine()
+        == top_card._get_value_for_engine()
+    )
     # All reshuffled cards should be face-down
     assert all(not card.face_up for card in game_state.draw_pile)
 

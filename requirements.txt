@@ -9,3 +9,5 @@ torch
 torchvision
 sb3_contrib
 tqdm
+wandb
+tensorboard

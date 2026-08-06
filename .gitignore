@@ -207,5 +207,9 @@ marimo/_lsp/
 __marimo__/
 
 
+# RL training artifacts
+wandb/
+Skyjo/src/rl/tb_logs/
+
 # MacOS
 .DS_Store

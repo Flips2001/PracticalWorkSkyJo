@@ -68,14 +68,15 @@ def test_phillips_opponent_uses_deterministic_rl_side():
     assert opponent.rl_deterministic is True
 
 
-def test_frozen_mirror_opponent_samples_both_sides():
-    # The mirror must sample actions (deterministic=False) on BOTH sides, or two
-    # greedy equal policies can lock into non-terminating rounds.
-    opponent = train.frozen_mirror_opponent(reference_model=object())
+def test_selfplay_opponent_samples_both_sides():
+    # The self-play opponent must sample actions (deterministic=False) on BOTH
+    # sides, or two near-identical greedy policies can stall a round.
+    opponent = train.selfplay_opponent(model=object())
 
+    assert opponent.name == "selfplay"
     assert opponent.rl_deterministic is False
-    reference_player = opponent.make_opponent(1)
-    assert reference_player.deterministic is False
+    selfplay_player = opponent.make_opponent(1)
+    assert selfplay_player.deterministic is False
 
 
 def test_evaluate_opponent_forwards_rl_determinism(monkeypatch):
@@ -86,9 +87,7 @@ def test_evaluate_opponent_forwards_rl_determinism(monkeypatch):
         return 10, 20, 0
 
     monkeypatch.setattr(train, "_play_matchup_game", _fake_game)
-    train.evaluate_opponent(
-        object(), train.frozen_mirror_opponent(object()), num_games=1
-    )
+    train.evaluate_opponent(object(), train.selfplay_opponent(object()), num_games=1)
 
     assert captured["rl_deterministic"] is False
 

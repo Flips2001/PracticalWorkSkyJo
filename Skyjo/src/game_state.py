@@ -29,6 +29,7 @@ class GameState:
     hand_card: Optional[Card]
     round_start_flips: dict[int, int]
     first_finisher_id: Optional[int]
+    previous_round_finisher_id: Optional[int]
 
     def __init__(self):
         self.round_number = 1
@@ -44,6 +45,7 @@ class GameState:
             {}
         )  # player_id -> flips done this round
         self.first_finisher_id = None  # Initialize first finisher as None
+        self.previous_round_finisher_id = None
 
     def create_deck(self) -> List[Card]:
         deck: List[Card] = []
@@ -85,7 +87,7 @@ class GameState:
             return False
         for row in range(1, len(grid)):
             card = grid[row][col]
-            if not card.face_up or card.value != first_card.value:
+            if not card.face_up or card.get_value() != first_card.get_value():
                 return False
         return True
 
@@ -111,7 +113,7 @@ class GameState:
         for col in reversed(cols_to_remove):
             for row in range(num_rows):
                 removed_card = grid[row].pop(col)
-                removed_card_value_sum += removed_card.value
+                removed_card_value_sum += removed_card.get_value()
                 self.discard_pile.append(removed_card)
 
         return ColumnClearStats(
@@ -227,8 +229,12 @@ class GameState:
         if self.first_finisher_id is not None:
             first_score = round_scores[self.first_finisher_id]
             if first_score > 0:
-                # Double only if first finisher does NOT have lowest score
-                if first_score != min(round_scores):
+                # Double if another player has an equal or lower score
+                if any(
+                    score <= first_score
+                    for i, score in enumerate(round_scores)
+                    if i != self.first_finisher_id
+                ):
                     round_scores[self.first_finisher_id] *= 2
 
         for i, ps in enumerate(player_states):
@@ -247,6 +253,8 @@ class GameState:
             new_grid = self.get_new_player_grid()
             player_state.reset_round(new_grid)
 
+        # Preserve the finisher for selecting the next round's starting player
+        self.previous_round_finisher_id = self.first_finisher_id
         self.round_number += 1
         self.first_finisher_id = None
         self.final_turn_phase = False

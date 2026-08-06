@@ -15,6 +15,7 @@ from Skyjo.src.rl.pettingzoo_env import SkyjoEnv
 
 _opponent_model: Optional[MaskablePPO] = None
 _reset_counter = 0
+_move_counter = 0
 _best_model_path: Optional[str] = None
 _device = "cpu"
 
@@ -45,12 +46,14 @@ def _load_opponent_if_needed() -> None:
 
 
 def _get_opponent_action(env: SkyjoEnv) -> int:
-    """Get action from opponent: 90% self-play model, 10% random."""
+    """Get action from opponent: 90% self-play model, every 10th move random."""
+    global _move_counter
     obs_dict = env.observe(env.agent_selection)
     mask = obs_dict["action_mask"]
 
-    # 10% random for exploration.
-    if _reset_counter % 10 == 0:
+    # Every 10th opponent move is random for exploration.
+    _move_counter += 1
+    if _move_counter % 10 == 0:
         legal = np.where(mask == 1)[0]
         return int(np.random.choice(legal))
 

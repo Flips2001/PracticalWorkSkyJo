@@ -9,7 +9,6 @@ from Skyjo.src.rl.encoding import (
     encode_observation,
     get_observation_space,
     normalize_card_value,
-    _column_match_counts,
 )
 
 
@@ -36,7 +35,7 @@ def _make_obs(**kwargs):
         discard_top=None,
         draw_pile_size=100,
         turn_phase=TurnPhase.CHOOSE_DRAW,
-        draw_pile_value_counts=None,
+        discard_pile_value_counts=None,
     )
     defaults.update(kwargs)
     return Observation(**defaults)
@@ -51,28 +50,6 @@ class TestNormalizeCardValue:
 
     def test_zero(self):
         assert normalize_card_value(0) == pytest.approx(2.0 / 14.0)
-
-
-class TestColumnMatchCounts:
-    def test_none_grid(self):
-        counts = _column_match_counts(None)
-        assert counts == [0.0, 0.0, 0.0, 0.0]
-
-    def test_all_hidden(self):
-        grid = _make_grid([0] * 12, face_up=False)
-        counts = _column_match_counts(grid)
-        assert counts == [0.0, 0.0, 0.0, 0.0]
-
-    def test_column_with_matching_values(self):
-        grid = _make_grid([5, 0, 0, 0, 5, 0, 0, 0, 5, 0, 0, 0], face_up=True)
-        counts = _column_match_counts(grid)
-        assert counts[0] == pytest.approx(1.0)  # 3x value 5 → 3/3
-        assert counts[1] == pytest.approx(1.0)  # 3x value 0 → 3/3
-
-    def test_column_with_partial_match(self):
-        grid = _make_grid([5, 0, 0, 0, 5, 0, 0, 0, 3, 0, 0, 0], face_up=True)
-        counts = _column_match_counts(grid)
-        assert counts[0] == pytest.approx(2.0 / 3.0)  # two 5s out of 3
 
 
 class TestEncodeObservation:
@@ -141,53 +118,55 @@ class TestEncodeObservation:
         vec = encode_observation(obs)
         assert vec[52] == pytest.approx(1.0)
 
-    def test_scores_normalized(self):
-        obs = _make_obs(scores=[50, 75])
-        vec = encode_observation(obs)
-        assert vec[57] == pytest.approx(0.5)  # own score / 100
-        assert vec[58] == pytest.approx(0.75)  # opponent score / 100
+    def test_scores_are_not_encoded(self):
+        # Round scores are derivable from revealed cards; the model must
+        # learn them, so identical boards with different score fields encode
+        # identically.
+        vec_a = encode_observation(_make_obs(scores=[50, 75]))
+        vec_b = encode_observation(_make_obs(scores=[0, 0]))
+        assert np.array_equal(vec_a, vec_b)
 
     def test_draw_pile_size_normalized(self):
         obs = _make_obs(draw_pile_size=75)
         vec = encode_observation(obs)
-        assert vec[59] == pytest.approx(75.0 / 150.0)
+        assert vec[57] == pytest.approx(75.0 / 150.0)
 
     def test_final_turn_flag(self):
         obs = _make_obs(final_turn_phase=True)
         vec = encode_observation(obs)
-        assert vec[68] == pytest.approx(1.0)
+        assert vec[58] == pytest.approx(1.0)
 
     def test_not_final_turn(self):
         obs = _make_obs(final_turn_phase=False)
         vec = encode_observation(obs)
-        assert vec[68] == pytest.approx(0.0)
+        assert vec[58] == pytest.approx(0.0)
 
     def test_first_finisher_flag(self):
         obs = _make_obs(first_finisher_id=0)  # player_id=0 is finisher
         vec = encode_observation(obs)
-        assert vec[69] == pytest.approx(1.0)
+        assert vec[59] == pytest.approx(1.0)
 
     def test_not_first_finisher(self):
         obs = _make_obs(first_finisher_id=1)  # opponent is finisher
         vec = encode_observation(obs)
-        assert vec[69] == pytest.approx(0.0)
+        assert vec[59] == pytest.approx(0.0)
 
-    def test_draw_pile_value_counts_absent(self):
-        obs = _make_obs(draw_pile_value_counts=None)
+    def test_discard_pile_value_counts_absent(self):
+        obs = _make_obs(discard_pile_value_counts=None)
         vec = encode_observation(obs)
-        assert np.allclose(vec[70:85], 0.0)
+        assert np.allclose(vec[60:75], 0.0)
 
-    def test_draw_pile_value_counts_encoded(self):
+    def test_discard_pile_value_counts_encoded(self):
         counts = [0] * 15
-        counts[0] = 5  # value -2 (max 5)
-        counts[2] = 9  # value 0 (max 15)
-        counts[14] = 5  # value 12 (max 10)
-        obs = _make_obs(draw_pile_value_counts=counts)
+        counts[0] = 5  # value -2 (all 5 copies)
+        counts[2] = 9  # value 0 (9 of 15 copies)
+        counts[14] = 5  # value 12 (5 of 10 copies)
+        obs = _make_obs(discard_pile_value_counts=counts)
         vec = encode_observation(obs)
 
-        assert vec[70] == pytest.approx(1.0)
-        assert vec[72] == pytest.approx(9.0 / 15.0)
-        assert vec[84] == pytest.approx(0.5)
+        assert vec[60] == pytest.approx(1.0)
+        assert vec[62] == pytest.approx(9.0 / 15.0)
+        assert vec[74] == pytest.approx(0.5)
 
 
 class TestObservationSpace:

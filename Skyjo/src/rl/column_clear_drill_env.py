@@ -8,8 +8,6 @@ opponent grid) so the agent learns the *pattern* — "draw the open card that
 completes a column, then swap it into the gap" — rather than one fixed layout.
 """
 
-from collections import Counter
-
 import numpy as np
 from gymnasium import Env, spaces
 from sb3_contrib.common.wrappers import ActionMasker
@@ -149,15 +147,14 @@ class ColumnClearDrillEnv(Env):
             discard_top=discard_top,
             draw_pile_size=len(self._draw_pile),
             turn_phase=self._phase,
-            draw_pile_value_counts=self._draw_pile_value_counts(),
+            discard_pile_value_counts=[
+                int(discard_top is not None and value == discard_top.get_value())
+                for value in CARD_VALUES
+            ],
         )
 
-    def _draw_pile_value_counts(self) -> list[int]:
-        value_counts = Counter(card.value for card in self._draw_pile)
-        return [value_counts.get(value, 0) for value in CARD_VALUES]
-
     def _round_score(self, grid: list[list[Card]]) -> int:
-        return sum(card.value for card in _iter_grid_cards(grid) if card.face_up)
+        return sum(card.get_value() for card in _iter_grid_cards(grid) if card.face_up)
 
 
 def mask_fn(env: Env) -> np.ndarray:
@@ -236,9 +233,9 @@ def _remaining_draw_pile(
     remaining_counts = dict(INITIAL_CARD_COUNTS)
     for grid in grids:
         for card in _iter_grid_cards(grid):
-            remaining_counts[card.value] -= 1
+            remaining_counts[card._get_value_for_engine()] -= 1
     for card in discard_pile:
-        remaining_counts[card.value] -= 1
+        remaining_counts[card.get_value()] -= 1
 
     if any(count < 0 for count in remaining_counts.values()):
         raise ValueError("Drill state uses more cards than exist in the deck.")

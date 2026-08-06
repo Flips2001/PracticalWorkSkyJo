@@ -7,6 +7,7 @@ from Skyjo.src.card import Card
 from Skyjo.src.action import Action
 from Skyjo.src.action_type import ActionType
 from Skyjo.src.turn_phase import TurnPhase
+from Skyjo.src.ui.terminal_game_ui import TerminalGameUI
 
 
 @pytest.fixture
@@ -23,11 +24,16 @@ def terminal_player(mock_stdscr):
     """Create a TerminalPlayer with mocked curses."""
     with patch("Skyjo.src.ui.terminal_ui.init_colors"):
         with patch("curses.curs_set"):
+            ui = TerminalGameUI(
+                stdscr=mock_stdscr,
+                player_id=0,
+                player_name="TestPlayer",
+                opponent_name="Opponent",
+            )
             player = TerminalPlayer(
                 player_id=0,
                 player_name="TestPlayer",
-                stdscr=mock_stdscr,
-                opponent_name="Opponent",
+                ui=ui,
             )
     return player
 
@@ -65,7 +71,7 @@ def mock_observation():
 def test_terminal_player_initialization(terminal_player):
     assert terminal_player.player_id == 0
     assert terminal_player.player_name == "TestPlayer"
-    assert terminal_player.opponent_name == "Opponent"
+    assert terminal_player.ui.opponent_name == "Opponent"
 
 
 def test_terminal_player_select_action_enter(
@@ -79,7 +85,7 @@ def test_terminal_player_select_action_enter(
     # Simulate pressing Enter immediately (select first action)
     mock_stdscr.getch.return_value = 10  # Enter key
 
-    with patch.object(terminal_player.renderer, "render_game"):
+    with patch.object(terminal_player.ui.renderer, "render_game"):
         result = terminal_player.select_action(mock_observation, legal_actions)
 
     assert result == legal_actions[0]
@@ -96,7 +102,7 @@ def test_terminal_player_select_action_arrow_down_then_enter(
     # Simulate pressing Down then Enter
     mock_stdscr.getch.side_effect = [curses.KEY_DOWN, 10]
 
-    with patch.object(terminal_player.renderer, "render_game"):
+    with patch.object(terminal_player.ui.renderer, "render_game"):
         result = terminal_player.select_action(mock_observation, legal_actions)
 
     assert result == legal_actions[1]
@@ -109,7 +115,7 @@ def test_terminal_player_select_action_quit(
     legal_actions = [Action(ActionType.DRAW_HIDDEN_CARD)]
     mock_stdscr.getch.return_value = ord("q")
 
-    with patch.object(terminal_player.renderer, "render_game"):
+    with patch.object(terminal_player.ui.renderer, "render_game"):
         with pytest.raises(KeyboardInterrupt):
             terminal_player.select_action(mock_observation, legal_actions)
 
@@ -131,7 +137,60 @@ def test_terminal_player_wraps_selection(
     # Press Up (wraps to last) then Enter
     mock_stdscr.getch.side_effect = [curses.KEY_UP, 10]
 
-    with patch.object(terminal_player.renderer, "render_game"):
+    with patch.object(terminal_player.ui.renderer, "render_game"):
         result = terminal_player.select_action(mock_observation, legal_actions)
 
     assert result == legal_actions[1]
+
+
+def test_a_key_toggles_analyze_mode(terminal_player, mock_stdscr, mock_observation):
+    legal_actions = [Action(ActionType.DRAW_HIDDEN_CARD)]
+    mock_stdscr.getch.side_effect = [ord("a"), ord("a"), ord("a"), 10]
+
+    assert terminal_player.ui.analyze_mode is False
+    with patch.object(terminal_player.ui.renderer, "render_game"):
+        terminal_player.select_action(mock_observation, legal_actions)
+
+    assert terminal_player.ui.analyze_mode is True
+
+
+def test_action_hooks_store_analysis_even_when_analyze_is_off(terminal_player):
+    acting = MagicMock()
+    acting.player_id = 1
+    acting.player_name = "RL"
+    acting.last_explanation = "exp"
+    action = Action(ActionType.DRAW_HIDDEN_CARD)
+    game = MagicMock()
+    game.players = [terminal_player, acting]
+    game.get_observation.return_value = "snap"
+
+    # analyze_mode off: no pause must be shown, but the analysis is stored so
+    # toggling on immediately shows the latest RL move.
+    with patch.object(terminal_player.ui, "_show_analysis_pause") as pause:
+        terminal_player.ui.before_action(game, acting, action)
+        terminal_player.ui.after_action(game, acting, action)
+
+    pause.assert_not_called()
+    game.get_observation.assert_called_once_with(terminal_player)
+    assert terminal_player.ui._opponent_explanation == "exp"
+    assert terminal_player.ui._opponent_snapshot == "snap"
+    assert terminal_player.ui._opponent_last_action == f"RL: {action}"
+
+
+def test_action_hooks_pause_after_opponent_action_in_analyze_mode(terminal_player):
+    acting = MagicMock()
+    acting.player_id = 1
+    acting.player_name = "RL"
+    acting.last_explanation = "exp"
+    action = Action(ActionType.DRAW_HIDDEN_CARD)
+    game = MagicMock()
+    game.players = [terminal_player, acting]
+    game.get_observation.side_effect = ["snapshot", "post-action"]
+    terminal_player.ui.analyze_mode = True
+
+    with patch.object(terminal_player.ui, "_show_analysis_pause") as pause:
+        terminal_player.ui.before_action(game, acting, action)
+        terminal_player.ui.after_action(game, acting, action)
+
+    pause.assert_called_once_with("post-action")
+    assert terminal_player.ui._opponent_snapshot == "snapshot"

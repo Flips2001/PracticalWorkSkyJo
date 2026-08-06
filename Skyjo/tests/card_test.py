@@ -1,4 +1,5 @@
 import pytest
+
 from Skyjo.src.card import Card
 
 
@@ -33,3 +34,14 @@ def test_hide_card(card):
     assert card.is_hidden()
     with pytest.raises(ValueError):
         card.get_value()
+
+
+def test_card_value_is_private_and_hidden_until_revealed():
+    card = Card(7)
+
+    assert not hasattr(card, "value")
+    with pytest.raises(ValueError, match="face down"):
+        card.get_value()
+
+    card.reveal()
+    assert card.get_value() == 7

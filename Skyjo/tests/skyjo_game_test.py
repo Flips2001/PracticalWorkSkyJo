@@ -1,11 +1,16 @@
+from dataclasses import FrozenInstanceError
+
+import numpy as np
 import pytest
 
 from Skyjo.src.skyjo_game import SkyjoGame
+from Skyjo.src.game_state import ColumnClearStats
 from Skyjo.src.players.player import Player
 from Skyjo.src.card import Card
 from Skyjo.src.action import Action
 from Skyjo.src.action_type import ActionType
 from Skyjo.src.turn_phase import TurnPhase
+from Skyjo.src.rl.encoding import encode_observation
 
 
 class TestPlayer(Player):
@@ -34,6 +39,24 @@ class TestPlayer(Player):
         )
 
 
+class RecordingActionHooks:
+    """Records game state immediately before and after each action."""
+
+    def __init__(self):
+        self.events = []
+
+    def before_action(self, game, player, action):
+        self.events.append(("before", player, action, self._hand_value(game)))
+
+    def after_action(self, game, player, action):
+        self.events.append(("after", player, action, self._hand_value(game)))
+
+    @staticmethod
+    def _hand_value(game):
+        hand_card = game.game_state.hand_card
+        return hand_card.get_value() if hand_card is not None else None
+
+
 def grid_from_values(values):
     return [[Card(v) for v in row] for row in values]
 
@@ -57,30 +80,110 @@ def empty_grid():
     return [[Card(0) for _ in range(4)] for _ in range(3)]
 
 
-def test_get_observation_basic_fields_and_deepcopy(two_players):
+def test_get_observation_basic_fields_and_immutability(two_players):
     game, p0, p1 = two_players
+    p0_state = game.get_player_state(p0)
+    p1_state = game.get_player_state(p1)
 
-    p0.player_state.grid = grid_from_values(
-        [[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12]]
-    )
-    p1.player_state.grid = grid_from_values(
-        [[-1, 0, 1, 2], [3, 4, 5, 6], [7, 8, 9, 10]]
-    )
+    p0_state.grid = grid_from_values([[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12]])
+    p1_state.grid = grid_from_values([[-1, 0, 1, 2], [3, 4, 5, 6], [7, 8, 9, 10]])
 
-    game.game_state.discard_pile = [Card(42)]
+    game.game_state.discard_pile = [Card(42, face_up=True)]
     game.game_state.draw_pile = [Card(-2), Card(-1)]
 
     obs = game.get_observation(p0)
 
     assert obs.player_id == 0
-    assert obs.scores == [0, 0]
-    assert obs.discard_top.value == 42
+    assert obs.scores == (0, 0)
+    assert obs.discard_top.get_value() == 42
     assert obs.draw_pile_size == 2
-    assert obs.opponent_cards == [None, p1.player_state.grid]
+    assert obs.opponent_cards[0] is None
+    assert all(card.is_hidden() for row in obs.opponent_cards[1] for card in row)
 
-    # deepcopy check
-    obs.card_grid[0][0].reveal()
-    assert p0.player_state.grid[0][0].is_hidden()
+    hidden_card = obs.card_grid[0][0]
+    assert hidden_card.value is None
+    assert not hasattr(hidden_card, "reveal")
+    with pytest.raises(ValueError, match="face down"):
+        hidden_card.get_value()
+    with pytest.raises(FrozenInstanceError):
+        hidden_card.face_up = True
+    with pytest.raises(FrozenInstanceError):
+        obs.draw_pile_size = 0
+    with pytest.raises(TypeError):
+        obs.card_grid[0][0] = obs.card_grid[0][1]
+
+    p0_state.grid[0][0].reveal()
+    assert obs.card_grid[0][0].is_hidden()
+    assert not p0_state.grid[0][0].is_hidden()
+
+
+def test_observation_is_independent_of_hidden_draw_pile_values(two_players):
+    game, p0, _ = two_players
+    game.game_state.discard_pile = [
+        Card(5, face_up=True),
+        Card(-2, face_up=True),
+    ]
+
+    game.game_state.draw_pile = [Card(-2), Card(-2)]
+    low_hidden_cards = game.get_observation(p0)
+
+    game.game_state.draw_pile = [Card(12), Card(12)]
+    high_hidden_cards = game.get_observation(p0)
+
+    assert (
+        low_hidden_cards.discard_pile_value_counts
+        == high_hidden_cards.discard_pile_value_counts
+    )
+    assert np.array_equal(
+        encode_observation(low_hidden_cards), encode_observation(high_hidden_cards)
+    )
+
+
+def test_discard_counts_forget_cards_moved_into_draw_pile(two_players):
+    game, p0, _ = two_players
+    game.game_state.draw_pile = []
+    game.game_state.discard_pile = [
+        Card(3, face_up=True),
+        Card(7, face_up=True),
+        Card(3, face_up=True),
+    ]
+
+    game.game_state._rebuild_draw_pile_from_discard()
+    observation = game.get_observation(p0)
+
+    assert sum(observation.discard_pile_value_counts) == 1
+    assert observation.discard_pile_value_counts[5] == 1  # value 3 remains on top
+
+
+def test_player_state_is_owned_by_game(two_players):
+    game, p0, _ = two_players
+
+    assert not hasattr(p0, "player_state")
+    assert game.get_player_state(p0).player_id == p0.player_id
+
+
+def test_first_round_starter_is_determined_from_revealed_cards(two_players):
+    game, p0, p1 = two_players
+    game.get_player_state(p0).grid = grid_from_values(
+        [[1, 2, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]
+    )
+    game.get_player_state(p1).grid = grid_from_values(
+        [[5, 6, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]
+    )
+    game.get_player_state(p0).grid[0][0].reveal()
+    game.get_player_state(p0).grid[0][1].reveal()
+    game.get_player_state(p1).grid[0][0].reveal()
+    game.get_player_state(p1).grid[0][1].reveal()
+
+    assert game._determine_starting_player() == 1
+
+
+def test_later_round_starts_with_previous_round_finisher(two_players):
+    game, _, _ = two_players
+    game.game_state.round_number = 2
+    game.game_state.previous_round_finisher_id = 0
+
+    assert game._determine_starting_player() == 0
 
 
 def test_get_legal_actions_after_drawing_hidden(two_players):
@@ -99,7 +202,8 @@ def test_get_legal_actions_after_drawing_hidden(two_players):
 
 def test_execute_action_draw_hidden_then_swap(two_players, empty_grid):
     game, p0, _ = two_players
-    p0.player_state.grid = empty_grid
+    p0_state = game.get_player_state(p0)
+    p0_state.grid = empty_grid
 
     draw_card = Card(55)
     game.game_state.draw_pile = [draw_card]
@@ -114,30 +218,45 @@ def test_execute_action_draw_hidden_then_swap(two_players, empty_grid):
 
     game.execute_action(p0, Action(ActionType.SWAP_CARD, pos=(1, 2)))
     assert game.game_state.hand_card is None
-    assert p0.player_state.grid[1][2] is draw_card
+    assert p0_state.grid[1][2] is draw_card
     assert draw_card.face_up
     assert game.game_state.discard_pile[-1].face_up
     assert game.game_state.phase == TurnPhase.END_TURN
 
 
-def test_execute_action_draw_open_discard_then_flip(two_players, empty_grid):
+def test_execute_action_draw_hidden_discard_then_flip(two_players, empty_grid):
     game, p0, _ = two_players
-    p0.player_state.grid = empty_grid
+    p0_state = game.get_player_state(p0)
+    p0_state.grid = empty_grid
 
-    discard = Card(9)
-    discard.reveal()
-    game.game_state.discard_pile = [discard]
+    drawn_card = Card(9)
+    game.game_state.draw_pile = [drawn_card]
     game.game_state.phase = TurnPhase.CHOOSE_DRAW
 
-    game.execute_action(p0, Action(ActionType.DRAW_OPEN_CARD))
-    assert game.game_state.hand_card is discard
+    game.execute_action(p0, Action(ActionType.DRAW_HIDDEN_CARD))
+    assert game.game_state.hand_card is drawn_card
 
     game.execute_action(p0, Action(ActionType.DISCARD_CARD))
     assert game.game_state.phase == TurnPhase.HAVE_TO_FLIP_AFTER_DISCARD
 
     game.execute_action(p0, Action(ActionType.FLIP_CARD, pos=(0, 0)))
-    assert p0.player_state.grid[0][0].face_up
+    assert p0_state.grid[0][0].face_up
     assert game.game_state.phase == TurnPhase.END_TURN
+
+
+def test_execute_action_rejects_action_not_in_legal_actions(two_players):
+    game, p0, _ = two_players
+    game.game_state.phase = TurnPhase.CHOOSE_DRAW
+    game.game_state.draw_pile = [Card(5)]
+
+    illegal_action = Action(ActionType.SWAP_CARD, pos=(0, 0))
+
+    with pytest.raises(ValueError, match="Illegal action"):
+        game.execute_action(p0, illegal_action)
+
+    assert game.game_state.phase == TurnPhase.CHOOSE_DRAW
+    assert game.game_state.hand_card is None
+    assert len(game.game_state.draw_pile) == 1
 
 
 def test_turn_executes_full_plan_and_resets_phase(game):
@@ -152,8 +271,10 @@ def test_turn_executes_full_plan_and_resets_phase(game):
     game.add_player(p0)
     game.add_player(p1)
 
-    p0.player_state.grid = [[Card(0) for _ in range(4)] for _ in range(3)]
-    p1.player_state.grid = [[Card(0) for _ in range(4)] for _ in range(3)]
+    p0_state = game.get_player_state(p0)
+    p1_state = game.get_player_state(p1)
+    p0_state.grid = [[Card(0) for _ in range(4)] for _ in range(3)]
+    p1_state.grid = [[Card(0) for _ in range(4)] for _ in range(3)]
 
     game.game_state.draw_pile = [Card(7)]
     game.game_state.phase = TurnPhase.CHOOSE_DRAW
@@ -161,7 +282,65 @@ def test_turn_executes_full_plan_and_resets_phase(game):
     game.turn(p0)
 
     assert game.game_state.phase == TurnPhase.CHOOSE_DRAW
-    assert any(card.face_up for row in p0.player_state.grid for card in row)
+    assert any(card.face_up for row in p0_state.grid for card in row)
+
+
+def test_turn_only_builds_acting_player_observations_without_hooks(game, monkeypatch):
+    p0 = TestPlayer(
+        0,
+        "P0",
+        plan=[
+            Action(ActionType.DRAW_HIDDEN_CARD),
+            Action(ActionType.SWAP_CARD, pos=(0, 0)),
+        ],
+    )
+    p1 = TestPlayer(1, "P1", plan=[])
+    game.add_player(p0)
+    game.add_player(p1)
+    game.game_state.draw_pile = [Card(7)]
+    game.game_state.phase = TurnPhase.CHOOSE_DRAW
+
+    observed_player_ids = []
+    get_observation = game.get_observation
+
+    def counting_get_observation(player):
+        observed_player_ids.append(player.player_id)
+        return get_observation(player)
+
+    monkeypatch.setattr(game, "get_observation", counting_get_observation)
+
+    game.turn(p0)
+
+    assert observed_player_ids == [p0.player_id, p0.player_id]
+
+
+def test_turn_calls_action_hooks_before_and_after_each_action():
+    hooks = RecordingActionHooks()
+    game = SkyjoGame(action_hooks=hooks)
+    p0 = TestPlayer(
+        0,
+        "P0",
+        plan=[
+            Action(ActionType.DRAW_HIDDEN_CARD),
+            Action(ActionType.SWAP_CARD, pos=(0, 0)),
+        ],
+    )
+    p1 = TestPlayer(1, "P1", plan=[])
+    game.add_player(p0)
+    game.add_player(p1)
+    game.game_state.draw_pile = [Card(7)]
+    game.game_state.phase = TurnPhase.CHOOSE_DRAW
+
+    game.turn(p0)
+
+    draw_action = Action(ActionType.DRAW_HIDDEN_CARD)
+    swap_action = Action(ActionType.SWAP_CARD, pos=(0, 0))
+    assert hooks.events == [
+        ("before", p0, draw_action, None),
+        ("after", p0, draw_action, 7),
+        ("before", p0, swap_action, 7),
+        ("after", p0, swap_action, None),
+    ]
 
 
 def test_turn_tracks_total_columns_cleared(game):
@@ -176,7 +355,9 @@ def test_turn_tracks_total_columns_cleared(game):
     game.add_player(p0)
     game.add_player(p1)
 
-    p0.player_state.grid = [
+    p0_state = game.get_player_state(p0)
+    p1_state = game.get_player_state(p1)
+    p0_state.grid = [
         [
             Card(11, face_up=False),
             Card(4, face_up=True),
@@ -196,7 +377,7 @@ def test_turn_tracks_total_columns_cleared(game):
             Card(2, face_up=True),
         ],
     ]
-    p1.player_state.grid = [[Card(0) for _ in range(4)] for _ in range(3)]
+    p1_state.grid = [[Card(0) for _ in range(4)] for _ in range(3)]
     game.game_state.discard_pile = [Card(12, face_up=True)]
     game.game_state.phase = TurnPhase.CHOOSE_DRAW
 
@@ -204,3 +385,27 @@ def test_turn_tracks_total_columns_cleared(game):
 
     assert game.total_columns_cleared[0] == 1
     assert game.total_column_clear_value_sum[0] == 36
+
+
+def test_final_reveal_removes_uniform_columns_before_scoring(two_players):
+    game, p0, p1 = two_players
+    p0_state = game.get_player_state(p0)
+    p1_state = game.get_player_state(p1)
+
+    # Player 0's first column becomes uniform only when the final hidden cards
+    # are revealed. The other columns and player 1's grid are non-uniform.
+    p0_state.grid = grid_from_values([[5, 1, 2, 3], [5, 4, 5, 6], [5, 7, 8, 9]])
+    p1_state.grid = grid_from_values([[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12]])
+
+    # Keep the complete 150-card deck invariant required by round reset.
+    game.game_state.draw_pile = [Card(0) for _ in range(126)]
+    game.game_state.discard_pile = []
+
+    game.reset()
+
+    assert game.game_state.all_player_final_scores == [45, 78]
+    assert game.last_column_clear_stats[0] == ColumnClearStats(
+        columns_removed=1, removed_card_value_sum=15
+    )
+    assert game.total_columns_cleared[0] == 1
+    assert game.total_column_clear_value_sum[0] == 15

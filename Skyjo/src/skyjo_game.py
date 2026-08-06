@@ -1,10 +1,10 @@
-import copy
 import logging
 from collections import Counter
 
 from Skyjo.src.action import Action
 from Skyjo.src.action_type import ActionType
 from Skyjo.src.card import Card
+from Skyjo.src.game_action_hooks import GameActionHooks
 from Skyjo.src.game_state import ColumnClearStats, GameState
 from Skyjo.src.observation import Observation
 from Skyjo.src.player_state import PlayerState
@@ -26,23 +26,31 @@ MAX_TURNS_PER_ROUND = 300
 
 
 class SkyjoGame:
-    def __init__(self):
+    def __init__(self, action_hooks: Optional[GameActionHooks] = None):
         self.game_state = GameState()
+        self.action_hooks = action_hooks
         self.players: List[Player] = []
+        self.player_states: dict[int, PlayerState] = {}
         self.num_players = 0
         self.last_column_clear_stats: dict[int, ColumnClearStats] = {}
         self.total_columns_cleared: dict[int, int] = {}
         self.total_column_clear_value_sum: dict[int, int] = {}
 
     def add_player(self, player: Player):
-        player.player_state.reset_game()
+        if player.player_id in self.player_states:
+            raise ValueError(f"Duplicate player ID: {player.player_id}")
+        player_state = PlayerState(player.player_id)
         player_grid = self.game_state.get_new_player_grid()
-        player.player_state.grid = player_grid
+        player_state.grid = player_grid
+        self.player_states[player.player_id] = player_state
         self.players.append(player)
         self.num_players += 1
 
+    def get_player_state(self, player: Player) -> PlayerState:
+        return self.player_states[player.player_id]
+
     def get_all_player_states(self) -> List[PlayerState]:
-        return [player.player_state for player in self.players]
+        return [self.get_player_state(player) for player in self.players]
 
     def step(self):
         pass
@@ -58,7 +66,7 @@ class SkyjoGame:
         opponent_cards = [None] * len(self.players)
         for p in self.players:
             if p.player_id != player.player_id:
-                opponent_cards[p.player_id] = p.player_state.get_grid()
+                opponent_cards[p.player_id] = self.get_player_state(p).get_grid()
         return opponent_cards
 
     def get_players_scores(self) -> List[int]:
@@ -68,7 +76,7 @@ class SkyjoGame:
         """
         opponent_scores = []
         for p in self.players:
-            opponent_scores.append(p.player_state.get_round_score())
+            opponent_scores.append(self.get_player_state(p).get_round_score())
         return opponent_scores
 
     def get_observation(self, player: Player) -> Observation:
@@ -80,7 +88,7 @@ class SkyjoGame:
 
         return Observation(
             player_id=player.player_id,
-            card_grid=copy.deepcopy(player.player_state.get_grid()),
+            card_grid=self.get_player_state(player).get_grid(),
             scores=self.get_players_scores(),
             hand_card=self.game_state.hand_card,
             opponent_cards=self.get_opponent_players_cards(player),
@@ -91,14 +99,17 @@ class SkyjoGame:
             ),
             draw_pile_size=len(self.game_state.draw_pile),
             turn_phase=self.game_state.phase,
-            draw_pile_value_counts=self._get_draw_pile_value_counts(),
-            total_scores=list(self.game_state.all_player_final_scores),
+            discard_pile_value_counts=self._get_discard_pile_value_counts(),
+            total_scores=self.game_state.all_player_final_scores,
             final_turn_phase=self.game_state.final_turn_phase,
             first_finisher_id=self.game_state.first_finisher_id,
         )
 
-    def _get_draw_pile_value_counts(self) -> List[int]:
-        value_counts = Counter(card.value for card in self.game_state.draw_pile)
+    def _get_discard_pile_value_counts(self) -> List[int]:
+        """Count values currently in the public discard pile."""
+        value_counts = Counter(
+            card.get_value() for card in self.game_state.discard_pile
+        )
         return [value_counts.get(value, 0) for value in _CARD_VALUES]
 
     def get_legal_actions(self, player: Player) -> List[Action]:
@@ -112,7 +123,7 @@ class SkyjoGame:
         match self.game_state.phase:
 
             case TurnPhase.STARTING_FLIPS:
-                hidden_positions = player.player_state.get_hidden_positions()
+                hidden_positions = self.get_player_state(player).get_hidden_positions()
                 if not hidden_positions:
                     # No hidden cards left to flip; nothing to do
                     return []
@@ -129,22 +140,22 @@ class SkyjoGame:
 
             case TurnPhase.HAVE_DRAWN_HIDDEN:
                 # If a card is in hand, allow swapping it with any grid position
-                for pos in player.player_state.get_all_positions():
+                for pos in self.get_player_state(player).get_all_positions():
                     legal.append(Action(ActionType.SWAP_CARD, pos=pos))
                 # Allow discarding the drawn card only if there exists at least one hidden card to flip afterwards
-                if player.player_state.get_hidden_positions():
+                if len(self.get_player_state(player).get_hidden_positions()) > 0:
                     legal.append(Action(ActionType.DISCARD_CARD))
                 return legal
 
             case TurnPhase.HAVE_DRAWN_OPEN:
                 # If a card is in hand, allow swapping it with any grid position
-                for pos in player.player_state.get_all_positions():
+                for pos in self.get_player_state(player).get_all_positions():
                     legal.append(Action(ActionType.SWAP_CARD, pos=pos))
                 return legal
 
             case TurnPhase.HAVE_TO_FLIP_AFTER_DISCARD:
                 # Must choose a hidden card to flip
-                for pos in player.player_state.get_hidden_positions():
+                for pos in self.get_player_state(player).get_hidden_positions():
                     legal.append(Action(ActionType.FLIP_CARD, pos=pos))
                 return legal
 
@@ -158,6 +169,14 @@ class SkyjoGame:
         Execute the selected action for the given player, mutating game state
         and advancing the turn phase accordingly.
         """
+        legal_actions = self.get_legal_actions(player)
+        if action not in legal_actions:
+            raise ValueError(
+                f"Illegal action {action} for player {player.player_id} "
+                f"during phase {self.game_state.phase}. "
+                f"Legal actions: {legal_actions}"
+            )
+
         # Start of turn: choose draw source
         match action.type:
             case ActionType.DRAW_HIDDEN_CARD:
@@ -181,11 +200,12 @@ class SkyjoGame:
                 r, c = action.pos
                 incoming = self.game_state.hand_card
                 incoming.reveal()
-                outgoing = player.player_state.grid[r][c]
+                player_state = self.get_player_state(player)
+                outgoing = player_state.grid[r][c]
                 if outgoing is not None:  # Theoretically should never be None
                     outgoing.reveal()
                     self.game_state.discard_pile.append(outgoing)
-                player.player_state.grid[r][c] = incoming
+                player_state.grid[r][c] = incoming
                 self.game_state.hand_card = None
                 self.game_state.phase = TurnPhase.END_TURN
                 return
@@ -205,7 +225,7 @@ class SkyjoGame:
                     action.pos is not None
                 ), "Attempted to flip card from empty position"
                 r, c = action.pos
-                card = player.player_state.grid[r][c]
+                card = self.get_player_state(player).grid[r][c]
                 if card is not None and card.is_hidden():
                     card.reveal()
 
@@ -241,8 +261,11 @@ class SkyjoGame:
                     )
                     break
                 action = player.select_action(observation, legal_actions)
+                if self.action_hooks is not None:
+                    self.action_hooks.before_action(self, player, action)
                 self.execute_action(player, action)
-                self._notify_action_selected(player, action)
+                if self.action_hooks is not None:
+                    self.action_hooks.after_action(self, player, action)
 
         self.game_state.phase = TurnPhase.CHOOSE_DRAW
 
@@ -253,21 +276,32 @@ class SkyjoGame:
 
     def _determine_starting_player(self) -> int:
         """
-        Determine which player starts this round:
-        - Primary: highest total score of flipped cards
-        - Tie-breaker: highest individual card among flipped cards
+        Determine which player starts this round.
+
+        The first round starts with the player whose two revealed cards have
+        the highest sum, breaking ties by the highest individual card. Later
+        rounds start with the player who finished the preceding round. If a
+        preceding round had no finisher, use the first-round comparison as a fallback.
+
         Returns the index of the starting player in self.players
         """
+        if (
+            self.game_state.round_number > 1
+            and self.game_state.previous_round_finisher_id is not None
+        ):
+            return self.game_state.previous_round_finisher_id
+
         best_index = 0
         best_score = float("-inf")
         best_highest_card = float("-inf")
 
         for i, player in enumerate(self.players):
             # Sum of the revealed cards for this round
-            score = player.player_state.get_round_score()
+            player_state = self.get_player_state(player)
+            score = player_state.get_round_score()
 
             # Highest individual revealed card for tie-break
-            highest_card = player.player_state.get_highest_revealed_card()
+            highest_card = player_state.get_highest_revealed_card()
 
             logger.info(
                 "Player %s has score %s, highest card %s",
@@ -301,42 +335,43 @@ class SkyjoGame:
             selected_action = player.select_action(
                 observation=observation, legal_actions=legal_actions
             )
+            if self.action_hooks is not None:
+                self.action_hooks.before_action(self, player, selected_action)
             self.execute_action(player, selected_action)
             clear_stats = self.game_state.remove_uniform_columns_to_discard_pile(
-                player.player_state
+                self.get_player_state(player)
             )
-            self.last_column_clear_stats[player.player_id] = clear_stats
-            self.total_columns_cleared[player.player_id] = (
-                self.total_columns_cleared.get(player.player_id, 0)
-                + clear_stats.columns_removed
-            )
-            self.total_column_clear_value_sum[player.player_id] = (
-                self.total_column_clear_value_sum.get(player.player_id, 0)
-                + clear_stats.removed_card_value_sum
-            )
-            self._notify_action_selected(player, selected_action)
+            self._record_column_clear_stats(player.player_id, clear_stats)
+            if self.action_hooks is not None:
+                self.action_hooks.after_action(self, player, selected_action)
         self.game_state.phase = TurnPhase.CHOOSE_DRAW
 
-    def _notify_action_selected(self, player: Player, action: Action) -> None:
-        explanation = getattr(player, "last_explanation", None)
-        for observer in self.players:
-            if observer.player_id == player.player_id:
-                continue
-            observer.observe_action(
-                player,
-                action,
-                explanation,
-                observation=self.get_observation(observer),
-            )
+    def _record_column_clear_stats(
+        self, player_id: int, clear_stats: ColumnClearStats
+    ) -> None:
+        self.last_column_clear_stats[player_id] = clear_stats
+        self.total_columns_cleared[player_id] = (
+            self.total_columns_cleared.get(player_id, 0) + clear_stats.columns_removed
+        )
+        self.total_column_clear_value_sum[player_id] = (
+            self.total_column_clear_value_sum.get(player_id, 0)
+            + clear_stats.removed_card_value_sum
+        )
 
     def reset(self):
-        for player_state in self.get_all_player_states():
+        player_states = self.get_all_player_states()
+        for player, player_state in zip(self.players, player_states):
             for row in player_state.grid:
                 for card in row:
-                    card.face_up = True
+                    card.reveal()
+
+            clear_stats = self.game_state.remove_uniform_columns_to_discard_pile(
+                player_state
+            )
+            self._record_column_clear_stats(player.player_id, clear_stats)
 
         # Finish scoring and prepare for next round
-        self.game_state.finish_round_and_calculate_stats(self.get_all_player_states())
+        self.game_state.finish_round_and_calculate_stats(player_states)
 
     def play_game(
         self,
