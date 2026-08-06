@@ -1,7 +1,10 @@
 from dataclasses import dataclass
 
 
-@dataclass
+# slots=True: Card is allocated in huge numbers during MCTS determinization/
+# rollouts, so slotted instances (no per-object __dict__) cut memory and speed up
+# attribute access. Card only ever has these two fields.
+@dataclass(slots=True)
 class Card:
     value: int
     face_up: bool = False

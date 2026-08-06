@@ -4,7 +4,7 @@ import curses
 import _curses
 import logging
 
-from Skyjo.src.players.rl_player import RLPlayer
+from Skyjo.src.players.so_ismcts_player import SOISMCTSPlayer
 from Skyjo.src.players.terminal_player import TerminalPlayer
 from Skyjo.src.skyjo_game import SkyjoGame
 
@@ -31,21 +31,23 @@ def run_game(stdscr):
     curses.curs_set(0)
     stdscr.keypad(True)
 
-    model_path = get_model_path()
     analyze_mode = _is_analyze_mode()
 
     game = SkyjoGame()
-    player1 = RLPlayer(
+    player1 = SOISMCTSPlayer(
         player_id=0,
-        player_name="RL Player",
-        model_path=model_path,
-        explain_moves=analyze_mode,
+        player_name="MCTS Player",
+        num_iterations=1000,
+        exploration=1.4,
+        rollout_max_turns=100,
+        pw_c=2.0,
+        pw_alpha=0.4,   
     )
     player2 = TerminalPlayer(
         player_id=1,
         player_name="You",
         stdscr=stdscr,
-        opponent_name="RL Player",
+        opponent_name="MCTS Player",
         analyze_mode=analyze_mode,
     )
     game.add_player(player1)
