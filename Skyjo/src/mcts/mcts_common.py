@@ -32,6 +32,7 @@ from Skyjo.src.action_type import ActionType
 from Skyjo.src.card import Card
 from Skyjo.src.game_state import GameState
 from Skyjo.src.observation import Observation
+from Skyjo.src.player_state import PlayerState
 from Skyjo.src.players.player import Player
 from Skyjo.src.skyjo_game import SkyjoGame
 from Skyjo.src.turn_phase import TurnPhase
@@ -43,11 +44,26 @@ CARD_VALUES = list(range(-2, 13))  # -2 .. 12
 ROLLOUT_MAX_TURNS = 200
 
 
+def card_value(card: Card) -> int:
+    """Value of a card inside a *simulated* game, face-down cards included.
+
+    ``Card.get_value`` deliberately refuses to reveal a face-down card. Inside a
+    determinized world every face-down value was *sampled* by ``determinize`` and
+    never read from the real game, so the engine-internal accessor is the right
+    one here: it cannot leak information the searcher is not entitled to.
+    """
+    return card._get_value_for_engine()
+
+
 # --------------------------------------------------------------------------- #
 # Simulation player + generic search node                                     #
 # --------------------------------------------------------------------------- #
 class SimPlayer(Player):
-    """Carries a grid inside a simulated game; its ``select_action`` is unused."""
+    """Stand-in player inside a simulated game; its ``select_action`` is unused.
+
+    Grids live in the engine's ``SkyjoGame.player_states``, so this really is
+    just an identity the engine can key a ``PlayerState`` off.
+    """
 
     def select_action(self, observation, legal_actions):  # pragma: no cover
         return legal_actions[0]
@@ -114,9 +130,21 @@ def full_deck_counter() -> Counter:
     return Counter(_DECK_TEMPLATE)
 
 
-def _copy_grid(grid: List[List[Card]]) -> List[List[Card]]:
-    """Shallow-per-card copy of a grid -- far cheaper than ``copy.deepcopy``."""
-    return [[Card(c.value, c.face_up) for c in row] for row in grid]
+def _observed_grid_to_cards(grid) -> List[List[Card]]:
+    """Mutable ``Card`` grid built from an observation's frozen ``ObservedCard`` grid.
+
+    Face-down slots get a placeholder card that ``determinize`` overwrites with a
+    sampled value, so no real hidden value is ever read here. The result is a
+    list of lists because the engine mutates grids in place (column clears pop
+    entries out of the rows).
+    """
+    return [
+        [
+            Card(card.get_value(), True) if card.face_up else Card(0, False)
+            for card in row
+        ]
+        for row in grid
+    ]
 
 
 # Mean value of an unknown card, used to score swaps onto face-down slots.
@@ -134,16 +162,16 @@ def action_priority(game: SkyjoGame, player: SimPlayer, actions: List[Action]):
     (a face-down slot is worth ``_EXPECTED_HIDDEN``).
     """
     gs = game.game_state
-    grid = player.player_state.grid
+    grid = game.get_player_state(player).grid
     hand = gs.hand_card
-    hv = hand.value if hand is not None else _EXPECTED_HIDDEN
+    hv = card_value(hand) if hand is not None else _EXPECTED_HIDDEN
 
     def score(a: Action) -> float:
         if a.type == ActionType.SWAP_CARD and a.pos is not None:
             r, c = a.pos
             if r < len(grid) and c < len(grid[r]):
                 card = grid[r][c]
-                current = card.value if card.face_up else _EXPECTED_HIDDEN
+                current = card_value(card) if card.face_up else _EXPECTED_HIDDEN
                 base = current - hv  # points removed by swapping
                 # Column-clear bonus: reward finishing / building a positive column
                 # so progressive widening does not starve these moves.
@@ -154,7 +182,7 @@ def action_priority(game: SkyjoGame, player: SimPlayer, actions: List[Action]):
                         if rr != r
                         and c < len(grid[rr])
                         and grid[rr][c].face_up
-                        and grid[rr][c].value == hv
+                        and card_value(grid[rr][c]) == hv
                     )
                     if col_matches == 2:
                         base += 3 * hv  # completes a clear
@@ -164,7 +192,7 @@ def action_priority(game: SkyjoGame, player: SimPlayer, actions: List[Action]):
             return 0.0
         if a.type == ActionType.DRAW_OPEN_CARD:
             top = gs.discard_pile[-1] if gs.discard_pile else None
-            return _EXPECTED_HIDDEN - top.value if top is not None else 0.0
+            return _EXPECTED_HIDDEN - card_value(top) if top is not None else 0.0
         # DISCARD / DRAW_HIDDEN / FLIP carry no immediate grid gain.
         return 0.0
 
@@ -177,6 +205,8 @@ def _blank_game(num_players: int) -> SkyjoGame:
     the piles anyway, so building that deck is pure waste on the search hot path."""
     game = SkyjoGame.__new__(SkyjoGame)
     game.players = []
+    game.player_states = {}
+    game.action_hooks = None
     game.num_players = num_players
     game.last_column_clear_stats = {}
     game.total_columns_cleared = {}
@@ -194,26 +224,76 @@ def _blank_game(num_players: int) -> SkyjoGame:
     gs.hand_card = None
     gs.round_start_flips = {}
     gs.first_finisher_id = None
+    gs.previous_round_finisher_id = None
     gs.players_to_finish = set()
     game.game_state = gs
     return game
 
 
+def _discard_value_counts(obs: Observation) -> Dict[int, int]:
+    """Value -> count of the discard pile, which is public information.
+
+    The observation reports the counts of the *whole* pile (the visible top card
+    included). Older/partial observations only carry the top card; that is the
+    fallback.
+    """
+    counts = obs.discard_pile_value_counts
+    if counts is not None:
+        return {
+            value: counts[idx]
+            for idx, value in enumerate(CARD_VALUES)
+            if idx < len(counts)
+        }
+    if obs.discard_top is not None and obs.discard_top.face_up:
+        return {obs.discard_top.get_value(): 1}
+    return {}
+
+
+def _build_discard_pile(obs: Observation, counts: Dict[int, int]) -> List[Card]:
+    """Rebuild the discard pile: known multiset, top card known, order below it not.
+
+    Modelling the buried cards (not just the top) matters because the engine
+    reshuffles the discard pile back into an exhausted draw pile -- a simulation
+    holding a one-card discard pile would starve for cards instead.
+    """
+    top_value = (
+        obs.discard_top.get_value()
+        if obs.discard_top is not None and obs.discard_top.face_up
+        else None
+    )
+    buried = dict(counts)
+    if top_value is not None and buried.get(top_value, 0) > 0:
+        buried[top_value] -= 1
+
+    pile = [
+        Card(value, True)
+        for value, count in buried.items()
+        for _ in range(max(0, count))
+    ]
+    random.shuffle(pile)  # the order below the top card is unknown
+    if top_value is not None:
+        pile.append(Card(top_value, True))
+    return pile
+
+
 def determinize(obs: Observation) -> SkyjoGame:
     """Build a fully-specified ``SkyjoGame`` consistent with ``obs``.
 
-    Hidden grid cards (mine and the opponents') and the draw-pile order are the
-    unknowns. Hidden values are *sampled* from the deck's remaining multiset so
-    the caller never sees the real face-down cards.
+    The unknowns are the face-down grid cards (mine and the opponents') and the
+    entire draw pile -- only its *size* is public. Everything else (face-up grid
+    cards, the discard pile, the card in hand) is subtracted from the full deck;
+    what remains is the unseen multiset, which is shuffled and dealt out over the
+    face-down slots and the draw pile. Hidden values are therefore always
+    *sampled*, never read from the real game.
     """
     num_players = len(obs.opponent_cards)
 
-    # Assemble each player's grid (deep-copied so simulation can mutate it).
+    # Assemble each player's grid (copied so the simulation can mutate it).
     grids: List[List[List[Card]]] = [None] * num_players  # type: ignore[list-item]
-    grids[obs.player_id] = _copy_grid(obs.card_grid)
+    grids[obs.player_id] = _observed_grid_to_cards(obs.card_grid)
     for pid, opp_grid in enumerate(obs.opponent_cards):
         if opp_grid is not None:
-            grids[pid] = _copy_grid(opp_grid)
+            grids[pid] = _observed_grid_to_cards(opp_grid)
 
     # Start from the full deck and remove everything whose value we can see.
     pool = full_deck_counter()
@@ -222,64 +302,79 @@ def determinize(obs: Observation) -> SkyjoGame:
         for r, row in enumerate(grid):
             for c, card in enumerate(row):
                 if card.face_up:
-                    pool[card.value] -= 1
+                    pool[card.get_value()] -= 1
                 else:
                     hidden_slots.append((pid, r, c))
-    if obs.discard_top is not None:
-        pool[obs.discard_top.value] -= 1
-    if obs.hand_card is not None:
-        pool[obs.hand_card.value] -= 1
 
-    # The draw pile's multiset is public; only its order is unknown.
-    draw_pile: List[Card] = []
-    if obs.draw_pile_value_counts is not None:
-        for idx, value in enumerate(CARD_VALUES):
-            count = obs.draw_pile_value_counts[idx]
-            pool[value] -= count
-            draw_pile.extend(Card(value, face_up=False) for _ in range(count))
-        random.shuffle(draw_pile)
+    discard_counts = _discard_value_counts(obs)
+    for value, count in discard_counts.items():
+        pool[value] -= count
 
-    # Remaining pool = hidden grid cards (+ buried discards we do not model).
-    remaining: List[int] = []
+    if obs.hand_card is not None and obs.hand_card.face_up:
+        pool[obs.hand_card.get_value()] -= 1
+
+    # What is left is exactly the unseen part of the deck: every face-down grid
+    # card plus the whole draw pile.
+    unknown: List[int] = []
     for value, count in pool.items():
         if count > 0:
-            remaining.extend([value] * count)
-    random.shuffle(remaining)
+            unknown.extend([value] * count)
+    random.shuffle(unknown)
 
-    for i, (pid, r, c) in enumerate(hidden_slots):
-        value = remaining[i] if i < len(remaining) else random.choice(CARD_VALUES)
-        grids[pid][r][c] = Card(value, face_up=False)
-    # Defensive fallback if the draw-pile multiset was unavailable.
-    if obs.draw_pile_value_counts is None:
-        leftover = remaining[len(hidden_slots) :]
-        draw_pile = [Card(v, face_up=False) for v in leftover[: obs.draw_pile_size]]
+    cursor = 0
 
-    return _assemble_game(obs, grids, draw_pile, num_players)
+    def next_unknown() -> int:
+        """Deal the next sampled value (falls back if the observation is odd)."""
+        nonlocal cursor
+        if cursor < len(unknown):
+            value = unknown[cursor]
+            cursor += 1
+            return value
+        return random.choice(CARD_VALUES)
+
+    # A face-down card in hand cannot happen in a real observation (the engine
+    # reveals it on draw), but sample it rather than crash if it ever does.
+    hand_card: Optional[Card] = None
+    if obs.hand_card is not None:
+        hand_card = (
+            Card(obs.hand_card.get_value(), True)
+            if obs.hand_card.face_up
+            else Card(next_unknown(), False)
+        )
+
+    for pid, r, c in hidden_slots:
+        grids[pid][r][c] = Card(next_unknown(), face_up=False)
+
+    draw_pile = [
+        Card(next_unknown(), face_up=False) for _ in range(max(0, obs.draw_pile_size))
+    ]
+
+    discard_pile = _build_discard_pile(obs, discard_counts)
+    return _assemble_game(
+        obs, grids, draw_pile, discard_pile, hand_card, num_players
+    )
 
 
 def _assemble_game(
     obs: Observation,
     grids: List[List[List[Card]]],
     draw_pile: List[Card],
+    discard_pile: List[Card],
+    hand_card: Optional[Card],
     num_players: int,
 ) -> SkyjoGame:
     """Wire the sampled cards into a runnable ``SkyjoGame`` at ``obs``'s state."""
     game = _blank_game(num_players)
     for pid in range(num_players):
-        sim_player = SimPlayer(pid, f"sim_{pid}")
-        sim_player.player_state.grid = grids[pid]
-        game.players.append(sim_player)
+        game.players.append(SimPlayer(pid, f"sim_{pid}"))
+        state = PlayerState(pid)
+        state.grid = grids[pid]
+        game.player_states[pid] = state
 
     gs: GameState = game.game_state
     gs.draw_pile = draw_pile
-    gs.discard_pile = (
-        [Card(obs.discard_top.value, True)] if obs.discard_top is not None else []
-    )
-    gs.hand_card = (
-        Card(obs.hand_card.value, obs.hand_card.face_up)
-        if obs.hand_card is not None
-        else None
-    )
+    gs.discard_pile = discard_pile
+    gs.hand_card = hand_card
     gs.phase = obs.turn_phase
     gs.current_player_id = obs.player_id
     gs.final_turn_phase = obs.final_turn_phase
@@ -301,17 +396,19 @@ def clone_game(game: SkyjoGame) -> SkyjoGame:
     """
     new = _blank_game(game.num_players)
     for p in game.players:
-        sp = SimPlayer(p.player_id, p.player_name)
-        sp.player_state.grid = [
-            [Card(c.value, c.face_up) for c in row] for row in p.player_state.grid
+        new.players.append(SimPlayer(p.player_id, p.player_name))
+        state = PlayerState(p.player_id)
+        state.grid = [
+            [Card(card_value(c), c.face_up) for c in row]
+            for row in game.get_player_state(p).grid
         ]
-        new.players.append(sp)
+        new.player_states[p.player_id] = state
 
     gs, ngs = game.game_state, new.game_state
-    ngs.draw_pile = [Card(c.value, c.face_up) for c in gs.draw_pile]
-    ngs.discard_pile = [Card(c.value, c.face_up) for c in gs.discard_pile]
+    ngs.draw_pile = [Card(card_value(c), c.face_up) for c in gs.draw_pile]
+    ngs.discard_pile = [Card(card_value(c), c.face_up) for c in gs.discard_pile]
     ngs.hand_card = (
-        Card(gs.hand_card.value, gs.hand_card.face_up)
+        Card(card_value(gs.hand_card), gs.hand_card.face_up)
         if gs.hand_card is not None
         else None
     )
@@ -334,7 +431,9 @@ def apply_action(game: SkyjoGame, player: SimPlayer, action: Action) -> bool:
     """
     game.execute_action(player, action)
     if action.type in _GRID_CHANGING:
-        game.game_state.remove_uniform_columns_to_discard_pile(player.player_state)
+        game.game_state.remove_uniform_columns_to_discard_pile(
+            game.get_player_state(player)
+        )
     if game.game_state.phase == TurnPhase.END_TURN:
         return advance_after_turn(game)
     return False
@@ -374,7 +473,7 @@ def rollout(game: SkyjoGame, max_turns: int = ROLLOUT_MAX_TURNS) -> None:
     turns = 0
     while turns < max_turns:
         player = players[gs.current_player_id]
-        ps = player.player_state
+        ps = game.get_player_state(player)
         while gs.phase != TurnPhase.END_TURN:
             action = rollout_policy(game, player)
             if action is None:
@@ -401,14 +500,14 @@ def rollout_policy(game: SkyjoGame, player: SimPlayer) -> Optional[Action]:
     """
     gs = game.game_state
     phase = gs.phase
-    grid = player.player_state.grid
+    grid = game.get_player_state(player).grid
 
     if phase == TurnPhase.CHOOSE_DRAW:
         discard = gs.discard_pile
         top = discard[-1] if discard else None
         can_open = bool(discard)
         can_hidden = bool(gs.draw_pile) or len(discard) > 1
-        if top is not None and top.value <= 4 and can_open:
+        if top is not None and card_value(top) <= 4 and can_open:
             return _ROLL_DRAW_OPEN
         if can_hidden:
             return _ROLL_DRAW_HIDDEN
@@ -416,7 +515,7 @@ def rollout_policy(game: SkyjoGame, player: SimPlayer) -> Optional[Action]:
 
     if phase == TurnPhase.HAVE_DRAWN_HIDDEN or phase == TurnPhase.HAVE_DRAWN_OPEN:
         hand = gs.hand_card
-        hv = hand.value if hand is not None else None
+        hv = card_value(hand) if hand is not None else None
         # Single grid pass: highest revealed card and the first hidden slot.
         max_val = None
         max_pos = None
@@ -424,8 +523,8 @@ def rollout_policy(game: SkyjoGame, player: SimPlayer) -> Optional[Action]:
         for r, row in enumerate(grid):
             for c, card in enumerate(row):
                 if card.face_up:
-                    if max_val is None or card.value > max_val:
-                        max_val, max_pos = card.value, (r, c)
+                    if max_val is None or card.get_value() > max_val:
+                        max_val, max_pos = card.get_value(), (r, c)
                 elif first_hidden is None:
                     first_hidden = (r, c)
 
@@ -439,7 +538,7 @@ def rollout_policy(game: SkyjoGame, player: SimPlayer) -> Optional[Action]:
                 matches = [
                     r
                     for r in range(nrows)
-                    if grid[r][c].face_up and grid[r][c].value == hv
+                    if grid[r][c].face_up and card_value(grid[r][c]) == hv
                 ]
                 if len(matches) == 2 and complete_pos is None:
                     complete_pos = (
@@ -456,12 +555,12 @@ def rollout_policy(game: SkyjoGame, player: SimPlayer) -> Optional[Action]:
                 return _ROLL_SWAP.get(complete_pos) or Action(
                     ActionType.SWAP_CARD, pos=complete_pos
                 )
-            if max_pos is not None and hand.value < max_val:
+            if max_pos is not None and hv < max_val:
                 return _ROLL_SWAP.get(max_pos) or Action(
                     ActionType.SWAP_CARD, pos=max_pos
                 )
             if (
-                hand.value > 5
+                hv > 5
                 and phase == TurnPhase.HAVE_DRAWN_HIDDEN
                 and first_hidden is not None
             ):
@@ -501,14 +600,29 @@ def rollout_policy(game: SkyjoGame, player: SimPlayer) -> Optional[Action]:
 def round_scores(game: SkyjoGame) -> List[int]:
     """Score every player as the engine would at round end.
 
-    All grid cards are summed (revealed and determinized-hidden alike), matching
-    ``SkyjoGame.reset`` which flips everything face-up before scoring. The
-    first-finisher doubling penalty is applied when it holds.
+    Mirrors ``SkyjoGame.reset`` + ``GameState.finish_round_and_calculate_stats``:
+    every card is flipped face-up first (so determinized-hidden cards count),
+    columns that turn out uniform are cleared, and the first finisher's score is
+    doubled unless it is strictly the lowest.
+
+    Note this mutates the simulated game -- it is only ever called on a finished
+    simulation that is discarded straight afterwards.
     """
+    gs = game.game_state
     states = game.get_all_player_states()
-    scores = [sum(card.value for row in s.grid for card in row) for s in states]
-    ff = game.game_state.first_finisher_id
-    if ff is not None and scores[ff] > 0 and scores[ff] != min(scores):
+    for state in states:
+        for row in state.grid:
+            for card in row:
+                card.reveal()
+        gs.remove_uniform_columns_to_discard_pile(state)
+
+    scores = [sum(card.get_value() for row in s.grid for card in row) for s in states]
+    ff = gs.first_finisher_id
+    if (
+        ff is not None
+        and scores[ff] > 0
+        and any(score <= scores[ff] for i, score in enumerate(scores) if i != ff)
+    ):
         scores[ff] *= 2
     return scores
 

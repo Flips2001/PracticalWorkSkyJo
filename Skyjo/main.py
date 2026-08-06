@@ -4,6 +4,7 @@ import curses
 import _curses
 import logging
 
+from Skyjo.src.ui.terminal_game_ui import TerminalGameUI
 from Skyjo.src.players.so_ismcts_player import SOISMCTSPlayer
 from Skyjo.src.players.terminal_player import TerminalPlayer
 from Skyjo.src.skyjo_game import SkyjoGame
@@ -32,7 +33,13 @@ def run_game(stdscr):
     stdscr.keypad(True)
 
     analyze_mode = _is_analyze_mode()
-
+    terminal_ui = TerminalGameUI(
+        stdscr=stdscr,
+        player_id=1,
+        player_name="You",
+        opponent_name="RL Player",
+    )
+    
     game = SkyjoGame()
     player1 = SOISMCTSPlayer(
         player_id=0,
@@ -46,9 +53,7 @@ def run_game(stdscr):
     player2 = TerminalPlayer(
         player_id=1,
         player_name="You",
-        stdscr=stdscr,
-        opponent_name="MCTS Player",
-        analyze_mode=analyze_mode,
+        ui=terminal_ui,
     )
     game.add_player(player1)
     game.add_player(player2)

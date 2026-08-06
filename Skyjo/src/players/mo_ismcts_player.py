@@ -31,8 +31,8 @@ from typing import List, Optional, Tuple
 
 from Skyjo.src.action import Action
 from Skyjo.src.observation import Observation
-from Skyjo.src.players import mcts_common as mc
-from Skyjo.src.players.mcts_common import Node
+from Skyjo.src.mcts import mcts_common as mc
+from Skyjo.src.mcts.mcts_common import Node
 from Skyjo.src.players.player import Player
 from Skyjo.src.skyjo_game import SkyjoGame
 from Skyjo.src.turn_phase import TurnPhase
