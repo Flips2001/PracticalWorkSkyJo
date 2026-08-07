@@ -32,18 +32,21 @@ def run_game(stdscr):
     curses.curs_set(0)
     stdscr.keypad(True)
 
-    analyze_mode = _is_analyze_mode()
+    opponent_name = "MCTS Player"
     terminal_ui = TerminalGameUI(
         stdscr=stdscr,
         player_id=1,
         player_name="You",
-        opponent_name="RL Player",
+        opponent_name=opponent_name,
     )
-    
-    game = SkyjoGame()
+    terminal_ui.analyze_mode = _is_analyze_mode()
+
+    # The UI implements the GameActionHooks protocol; handing it to the game is
+    # what lets analyze mode observe the opponent's moves as they happen.
+    game = SkyjoGame(action_hooks=terminal_ui)
     player1 = SOISMCTSPlayer(
         player_id=0,
-        player_name="MCTS Player",
+        player_name=opponent_name,
         num_iterations=1000,
         exploration=1.4,
         rollout_max_turns=100,
@@ -64,12 +67,12 @@ def run_game(stdscr):
             scores = g.game_state.all_player_final_scores
             names = [p.player_name for p in g.players]
             round_num = g.game_state.round_number - 1
-            player2.show_round_summary(scores, names, round_num)
+            terminal_ui.show_round_summary(scores, names, round_num)
 
         def on_game_over(g):
             final_scores = g.game_state.all_player_final_scores
             names = [p.player_name for p in g.players]
-            player2.show_game_over(final_scores, names)
+            terminal_ui.show_game_over(final_scores, names)
 
         game.play_game(on_round_end=on_round_end, on_game_over=on_game_over)
 
