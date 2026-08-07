@@ -592,6 +592,9 @@ class TerminalRenderer:
         )
 
         self.stdscr.refresh()
+        # Drop keys typed while the opponent was thinking; otherwise a buffered
+        # keystroke satisfies this prompt instantly and the summary flashes past.
+        curses.flushinp()
         self.stdscr.getch()
 
     def render_game_over(self, scores: List[int], player_names: List[str]):
@@ -656,6 +659,9 @@ class TerminalRenderer:
         )
 
         self.stdscr.refresh()
+        # Same here: without flushing, type-ahead exits the game immediately and
+        # the player never sees the final scores.
+        curses.flushinp()
         self.stdscr.getch()
 
     def _safe_addstr(self, row: int, col: int, text: str, attr: int = 0):

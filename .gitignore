@@ -213,3 +213,5 @@ Skyjo/src/rl/tb_logs/
 
 # MacOS
 .DS_Store
+
+Skyjo/mcts_experiments/

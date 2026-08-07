@@ -28,7 +28,12 @@ def get_model_path():
 
 
 def run_game(stdscr):
-    """Main game loop running inside curses wrapper."""
+    """Main game loop running inside curses wrapper.
+
+    Returns ``(player_names, final_scores)`` once the game is played out, or
+    ``None`` if the player quit early, so the caller can report the result on
+    stdout after curses has torn the screen down.
+    """
     curses.curs_set(0)
     stdscr.keypad(True)
 
@@ -61,6 +66,8 @@ def run_game(stdscr):
     game.add_player(player1)
     game.add_player(player2)
 
+    result = None
+
     try:
 
         def on_round_end(g):
@@ -70,8 +77,10 @@ def run_game(stdscr):
             terminal_ui.show_round_summary(scores, names, round_num)
 
         def on_game_over(g):
+            nonlocal result
             final_scores = g.game_state.all_player_final_scores
             names = [p.player_name for p in g.players]
+            result = (names, list(final_scores))
             terminal_ui.show_game_over(final_scores, names)
 
         game.play_game(on_round_end=on_round_end, on_game_over=on_game_over)
@@ -79,19 +88,36 @@ def run_game(stdscr):
     except KeyboardInterrupt:
         pass
 
+    return result
+
 
 def _is_analyze_mode():
     return any(arg in sys.argv for arg in ("--analyze", "--analyse", "--analize"))
+
+
+def print_final_scores(player_names, scores):
+    """Report the result on stdout so it survives the curses teardown."""
+    winner_index = scores.index(min(scores))  # lowest score wins in Skyjo
+    print("\n=== Game over ===")
+    for i, (name, score) in enumerate(zip(player_names, scores)):
+        marker = "  <- winner" if i == winner_index else ""
+        print(f"  {name}: {score} points{marker}")
 
 
 def main():
 
     logging.basicConfig(level=logging.CRITICAL)
     try:
-        curses.wrapper(run_game)
+        result = curses.wrapper(run_game)
     except _curses.error:
         # Fallback to legacy mode if no terminal is available (e.g. running from IDE)
         print("No terminal available for curses UI, falling back to legacy mode.")
+        return
+
+    # curses restores (and thereby clears) the terminal on exit, so the final
+    # screen is gone by now; reprint the result as plain text.
+    if result is not None:
+        print_final_scores(*result)
 
 
 if __name__ == "__main__":
