@@ -478,7 +478,10 @@ def rollout(game: SkyjoGame, max_turns: int = ROLLOUT_MAX_TURNS) -> None:
             action = rollout_policy(game, player)
             if action is None:
                 break
-            execute(player, action)
+            # validate=False: rollout_policy derives its moves from the live game
+            # state and only ever returns legal ones, so re-deriving the legal
+            # list here would be the rollout's biggest single cost for nothing.
+            execute(player, action, False)
             if action.type in _GRID_CHANGING:
                 gs.remove_uniform_columns_to_discard_pile(ps)
         if advance_after_turn(game):

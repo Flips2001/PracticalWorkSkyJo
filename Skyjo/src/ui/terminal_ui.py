@@ -12,7 +12,7 @@ moves on.
 """
 
 import curses
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Sequence
 
 from Skyjo.src.observation import Observation, ObservedCard
 from Skyjo.src.turn_phase import TurnPhase
@@ -42,6 +42,31 @@ _CARD_VALUES = tuple(range(-2, 13))
 # Layout: opponent grid offset within a state block, analysis block column.
 _OPPONENT_GRID_OFFSET = 38
 _ANALYSIS_COL = 80
+
+# Horizontal space one player's grid block occupies (a 4-column grid is 23 cells
+# wide; the rest is the gutter between neighbouring players).
+_GRID_BLOCK_WIDTH = 38
+# Vertical space one row of grids occupies, so wrapped rows do not overlap.
+_GRID_BLOCK_HEIGHT = 9
+
+
+def _grid_positions(
+    num_players: int, col: int, row: int, max_x: int
+) -> List[tuple[int, int]]:
+    """(row, col) for each player's grid, wrapping to a new line when too wide.
+
+    With two players this reproduces the original side-by-side layout; with more
+    it keeps packing them left to right and starts a new row of grids once the
+    next block would run past the right edge of the terminal.
+    """
+    per_line = max(1, (max_x - col) // _GRID_BLOCK_WIDTH)
+    return [
+        (
+            row + (i // per_line) * _GRID_BLOCK_HEIGHT,
+            col + (i % per_line) * _GRID_BLOCK_WIDTH,
+        )
+        for i in range(num_players)
+    ]
 
 
 def _heat_colors():
@@ -160,8 +185,7 @@ class TerminalRenderer:
     def render_game(
         self,
         observation: Observation,
-        player_name: str,
-        opponent_name: str,
+        player_names: Sequence[str],
         legal_actions: List,
         selected_index: int,
         message: str = "",
@@ -210,18 +234,23 @@ class TerminalRenderer:
         row += 1
 
         state_top = row
-        row = self._render_state(
-            state_top, 2, observation, player_name, opponent_name, heat=None
+        row = self._render_state(state_top, 2, observation, player_names, heat=None)
+        # The analysis panel sits to the right of the grids; with more than two
+        # players they extend past the old fixed column, so push it clear of them.
+        num_seats = max(1, len(observation.opponent_cards))
+        analysis_col = max(
+            _ANALYSIS_COL, 2 + min(num_seats, max(1, (max_x - 2) // _GRID_BLOCK_WIDTH))
+            * _GRID_BLOCK_WIDTH + 2,
         )
-        self._render_analysis(
-            state_top,
-            _ANALYSIS_COL,
-            opponent_last_action,
-            opponent_explanation,
-            opponent_snapshot,
-            player_name,
-            opponent_name,
-        )
+        if analysis_col + 30 < max_x:
+            self._render_analysis(
+                state_top,
+                analysis_col,
+                opponent_last_action,
+                opponent_explanation,
+                opponent_snapshot,
+                player_names,
+            )
         row += 1
 
         # Action selection area
@@ -253,12 +282,19 @@ class TerminalRenderer:
         row: int,
         col: int,
         observation: Observation,
-        player_name: str,
-        opponent_name: str,
+        player_names: Sequence[str],
         heat: Optional[_Heat],
     ) -> int:
-        """Render one full game state block; returns the next free row."""
+        """Render one full game state block; returns the next free row.
+
+        ``player_names`` is indexed by ``player_id`` and may hold any number of
+        players; the viewer is drawn first and the others follow in seat order.
+        """
         heat = heat or _Heat(None)
+        max_x = self.stdscr.getmaxyx()[1]
+
+        def name_of(pid: int) -> str:
+            return player_names[pid] if pid < len(player_names) else f"Player {pid}"
 
         self._render_game_info(row, col, observation, heat)
         row += 2
@@ -270,51 +306,44 @@ class TerminalRenderer:
             total_text = "Total Points:  "
             self._safe_addstr(row, col, total_text, curses.color_pair(COLOR_TITLE))
             col_offset = col + len(total_text)
-            self._safe_addstr(
-                row,
-                col_offset,
-                f"You: {observation.total_scores[observation.player_id]}",
-                curses.color_pair(COLOR_SCORE) | curses.A_BOLD,
-            )
-            col_offset += 12
-            for i, score in enumerate(observation.total_scores):
-                if i != observation.player_id:
-                    self._safe_addstr(
-                        row,
-                        col_offset,
-                        f"{opponent_name}: {score}",
-                        curses.color_pair(COLOR_SCORE),
-                    )
+            for pid, score in enumerate(observation.total_scores):
+                is_self = pid == observation.player_id
+                label = f"You: {score}" if is_self else f"{name_of(pid)}: {score}"
+                attr = curses.color_pair(COLOR_SCORE)
+                self._safe_addstr(
+                    row, col_offset, label, attr | curses.A_BOLD if is_self else attr
+                )
+                col_offset += len(label) + 3
             row += 1
         row += 1
 
-        self._render_player_grid(
-            row,
-            col,
-            player_name,
-            observation.card_grid,
-            observation.scores[observation.player_id],
-            is_self=True,
-            heat=heat,
-        )
-        if observation.opponent_cards:
-            for i, opp_grid in enumerate(observation.opponent_cards):
-                if opp_grid is not None:
-                    opp_score = (
-                        observation.scores[i] if i < len(observation.scores) else 0
-                    )
-                    self._render_player_grid(
-                        row,
-                        col + _OPPONENT_GRID_OFFSET,
-                        opponent_name,
-                        opp_grid,
-                        opp_score,
-                        is_self=False,
-                        heat=heat,
-                    )
-                    break
+        # The viewer first, then every other seat in order. Opponent grids are
+        # None only for seats the observation does not expose.
+        seats = [observation.player_id] + [
+            pid
+            for pid in range(len(observation.opponent_cards))
+            if pid != observation.player_id
+            and observation.opponent_cards[pid] is not None
+        ]
+        positions = _grid_positions(len(seats), col, row, max_x)
+        for (grid_row, grid_col), pid in zip(positions, seats):
+            is_self = pid == observation.player_id
+            grid = (
+                observation.card_grid if is_self else observation.opponent_cards[pid]
+            )
+            score = observation.scores[pid] if pid < len(observation.scores) else 0
+            self._render_player_grid(
+                grid_row,
+                grid_col,
+                name_of(pid),
+                grid,
+                score,
+                is_self=is_self,
+                heat=heat,
+            )
 
-        return row + 9
+        lines = (positions[-1][0] - row) // _GRID_BLOCK_HEIGHT + 1 if positions else 1
+        return row + lines * _GRID_BLOCK_HEIGHT
 
     def _render_analysis(
         self,
@@ -323,8 +352,7 @@ class TerminalRenderer:
         action_text: str,
         explanation: Optional[Any],
         snapshot: Optional[Observation],
-        player_name: str,
-        opponent_name: str,
+        player_names: Sequence[str],
     ):
         """Render the RL move analysis: decision-time snapshot with heatmap."""
         if not action_text and explanation is None:
@@ -370,9 +398,7 @@ class TerminalRenderer:
         )
         row += 2
 
-        row = self._render_state(
-            row, col, snapshot, player_name, opponent_name, _Heat(explanation)
-        )
+        row = self._render_state(row, col, snapshot, player_names, _Heat(explanation))
         row += 1
 
         # Heatmap legend

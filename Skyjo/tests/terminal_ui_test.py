@@ -90,8 +90,7 @@ def _render(explanation, snapshot=None):
             # The live board moved on: the 12 the explanation refers to only
             # exists in the snapshot.
             observation=_observation(top_left_value=3),
-            player_name="You",
-            opponent_name="RL",
+            player_names=["You", "RL"],
             legal_actions=[],
             selected_index=0,
             opponent_last_action="RL: draw open card" if explanation else "",

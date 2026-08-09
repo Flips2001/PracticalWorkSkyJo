@@ -164,14 +164,18 @@ def test_action_hooks_store_analysis_even_when_analyze_is_off(terminal_player):
     game.players = [terminal_player, acting]
     game.get_observation.return_value = "snap"
 
-    # analyze_mode off: no pause must be shown, but the analysis is stored so
-    # toggling on immediately shows the latest RL move.
-    with patch.object(terminal_player.ui, "_show_analysis_pause") as pause:
+    # analyze_mode off: no analysis pause, but the board is still redrawn so the
+    # move is visible and attributed, and the analysis is stored so toggling on
+    # immediately shows the latest RL move.
+    with patch.object(terminal_player.ui, "_show_analysis_pause") as pause, patch.object(
+        terminal_player.ui, "_show_opponent_move"
+    ) as show_move:
         terminal_player.ui.before_action(game, acting, action)
         terminal_player.ui.after_action(game, acting, action)
 
     pause.assert_not_called()
-    game.get_observation.assert_called_once_with(terminal_player)
+    show_move.assert_called_once_with("snap", acting, action)
+    game.get_observation.assert_called_with(terminal_player)
     assert terminal_player.ui._opponent_explanation == "exp"
     assert terminal_player.ui._opponent_snapshot == "snap"
     assert terminal_player.ui._opponent_last_action == f"RL: {action}"

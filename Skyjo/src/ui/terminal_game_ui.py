@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import curses
-from typing import List, TYPE_CHECKING
+import time
+from typing import List, Optional, Sequence, TYPE_CHECKING
 
 from Skyjo.src.action import Action
 from Skyjo.src.observation import Observation
@@ -23,11 +24,34 @@ class TerminalGameUI:
         player_id: int,
         player_name: str,
         opponent_name: str = "Opponent",
+        player_names: Optional[Sequence[str]] = None,
+        opponent_move_delay: float = 0.9,
     ):
+        """
+        :param player_id: seat of the human player (the viewer).
+        :param player_name: the viewer's display name.
+        :param opponent_name: name for the single opponent in a two-player game.
+        :param player_names: names for every seat, indexed by player id. Pass
+            this for games with three or more players; it supersedes
+            ``opponent_name``.
+        :param opponent_move_delay: seconds the board is shown after each
+            opponent action. Without it the screen is only redrawn when it is the
+            human's turn, so with two or more AI seats every AI move between two
+            human turns lands at once and it is impossible to tell who did what.
+            Set to 0 to redraw without pausing.
+        """
         self.stdscr = stdscr
         self.player_id = player_id
         self.player_name = player_name
         self.opponent_name = opponent_name
+        self.opponent_move_delay = opponent_move_delay
+        if player_names is not None:
+            self.player_names = list(player_names)
+        else:
+            # No per-seat names given: every other seat shares ``opponent_name``.
+            # Sized off player_id so a viewer in seat 2+ still gets a valid list.
+            self.player_names = [opponent_name] * max(2, player_id + 1)
+            self.player_names[player_id] = player_name
         self.renderer = TerminalRenderer(stdscr)
         self.analyze_mode = False
         self._message = ""
@@ -48,8 +72,7 @@ class TerminalGameUI:
         while True:
             self.renderer.render_game(
                 observation=observation,
-                player_name=self.player_name,
-                opponent_name=self.opponent_name,
+                player_names=self.player_names,
                 legal_actions=legal_actions,
                 selected_index=selected_index,
                 message=self._message,
@@ -103,11 +126,36 @@ class TerminalGameUI:
         self._opponent_snapshot = game.get_observation(self._viewer(game))
 
     def after_action(self, game: "SkyjoGame", player: "Player", action: Action) -> None:
-        """Optionally pause on the viewer's post-action state."""
-        if player.player_id == self.player_id or not self.analyze_mode:
+        """Show the board after an opponent acts, so turns read as sequential."""
+        if player.player_id == self.player_id:
             return
 
-        self._show_analysis_pause(game.get_observation(self._viewer(game)))
+        observation = game.get_observation(self._viewer(game))
+        if self.analyze_mode:
+            self._show_analysis_pause(observation)
+        else:
+            self._show_opponent_move(observation, player, action)
+
+    def _show_opponent_move(
+        self, observation: Observation, player: "Player", action: Action
+    ) -> None:
+        """Draw one opponent's move and hold it briefly.
+
+        Previously nothing was drawn here unless analyze mode was on, so the
+        human only ever saw the board on their own turn -- with several AI seats
+        their moves all appeared to happen at once.
+        """
+        self.renderer.render_game(
+            observation=observation,
+            player_names=self.player_names,
+            legal_actions=[],
+            selected_index=0,
+            message=f"{player.player_name}: {action}",
+            show_actions=False,
+            help_text=self._help_text(),
+        )
+        if self.opponent_move_delay > 0:
+            time.sleep(self.opponent_move_delay)
 
     def _viewer(self, game: "SkyjoGame") -> "Player":
         try:
@@ -127,8 +175,7 @@ class TerminalGameUI:
         while True:
             self.renderer.render_game(
                 observation=observation,
-                player_name=self.player_name,
-                opponent_name=self.opponent_name,
+                player_names=self.player_names,
                 legal_actions=[],
                 selected_index=0,
                 message="Analyze mode: press Enter to continue.",

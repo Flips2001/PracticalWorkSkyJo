@@ -6,6 +6,7 @@ import logging
 
 from Skyjo.src.ui.terminal_game_ui import TerminalGameUI
 from Skyjo.src.players.so_ismcts_player import SOISMCTSPlayer
+from Skyjo.src.players.rl_player import RLPlayer
 from Skyjo.src.players.terminal_player import TerminalPlayer
 from Skyjo.src.skyjo_game import SkyjoGame
 
@@ -37,35 +38,41 @@ def run_game(stdscr):
     curses.curs_set(0)
     stdscr.keypad(True)
 
-    opponent_name = "MCTS Player"
+    # Seat order is the turn order; the human takes the last seat. Names are
+    # per-seat so the UI can label every grid, not just "the" opponent.
+    rl_name, mcts_name, human_name = "RL Player", "MCTS Player", "You"
+    player_names = [rl_name, mcts_name, human_name]
+    human_seat = len(player_names) - 1
+
     terminal_ui = TerminalGameUI(
         stdscr=stdscr,
-        player_id=1,
-        player_name="You",
-        opponent_name=opponent_name,
+        player_id=human_seat,
+        player_name=human_name,
+        player_names=player_names,
     )
     terminal_ui.analyze_mode = _is_analyze_mode()
 
     # The UI implements the GameActionHooks protocol; handing it to the game is
-    # what lets analyze mode observe the opponent's moves as they happen.
+    # what lets analyze mode observe the opponents' moves as they happen.
     game = SkyjoGame(action_hooks=terminal_ui)
-    player1 = SOISMCTSPlayer(
-        player_id=0,
-        player_name=opponent_name,
-        num_iterations=1000,
-        exploration=1.4,
-        rollout_max_turns=100,
-        pw_c=2.0,
-        pw_alpha=0.4,
-    )
-    player2 = TerminalPlayer(
-        player_id=1,
-        player_name="You",
-        ui=terminal_ui,
-    )
-    game.add_player(player1)
-    game.add_player(player2)
 
+    game.add_player(
+        RLPlayer(player_id=0, player_name=rl_name, model_path=get_model_path())
+    )
+    game.add_player(
+        SOISMCTSPlayer(
+            player_id=1,
+            player_name=mcts_name,
+            num_iterations=1000,
+            exploration=1.4,
+            rollout_max_turns=100,
+            pw_c=2.0,
+            pw_alpha=0.4,
+        )
+    )
+    game.add_player(
+        TerminalPlayer(player_id=human_seat, player_name=human_name, ui=terminal_ui)
+    )
     result = None
 
     try:

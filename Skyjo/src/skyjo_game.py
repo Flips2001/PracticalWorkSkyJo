@@ -164,18 +164,27 @@ class SkyjoGame:
 
         return legal
 
-    def execute_action(self, player: Player, action: Action) -> None:
+    def execute_action(
+        self, player: Player, action: Action, validate: bool = True
+    ) -> None:
         """
         Execute the selected action for the given player, mutating game state
         and advancing the turn phase accordingly.
+
+        ``validate=False`` skips the legality check. Validating means rebuilding
+        the whole legal-action list and scanning it, which profiling showed to be
+        the single largest cost inside MCTS rollouts -- where the actions are
+        generated legal by construction, so the check is pure overhead. Only pass
+        False where the caller guarantees legality; real play must leave it on.
         """
-        legal_actions = self.get_legal_actions(player)
-        if action not in legal_actions:
-            raise ValueError(
-                f"Illegal action {action} for player {player.player_id} "
-                f"during phase {self.game_state.phase}. "
-                f"Legal actions: {legal_actions}"
-            )
+        if validate:
+            legal_actions = self.get_legal_actions(player)
+            if action not in legal_actions:
+                raise ValueError(
+                    f"Illegal action {action} for player {player.player_id} "
+                    f"during phase {self.game_state.phase}. "
+                    f"Legal actions: {legal_actions}"
+                )
 
         # Start of turn: choose draw source
         match action.type:
