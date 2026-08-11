@@ -1,12 +1,23 @@
 """Short curriculum environment for learning the column-clear tactic.
 
+Each reset samples one of two scenarios (see `DrillMode`):
+
+* ``CLEAR_COLUMN`` — two matching cards are already face up in a column and the
+  third lies on the discard top: take it and swap it into the gap, removing the
+  column.
+* ``BUILD_PAIR`` — a mostly-covered board shows a single card and its match lies
+  on the discard top: take it and swap it into the *same* column, lining the pair
+  up so a later third card can clear it.
+
 Rewards are deliberately kept on the same small scale as the real-game shaping
 (|reward| <= ~0.1) so that mixing this drill into the self-play vector env does
 not dominate PPO's advantage normalisation and drown out the win signal. The
 board is freshly randomised each reset (values, target column/row, target value,
-opponent grid) so the agent learns the *pattern* — "draw the open card that
-completes a column, then swap it into the gap" — rather than one fixed layout.
+opponent grid) so the agent learns the *pattern* — "draw the open card that fits
+a column, then swap it into the right slot" — rather than one fixed layout.
 """
+
+from enum import Enum, auto
 
 import numpy as np
 from gymnasium import Env, spaces
@@ -29,24 +40,40 @@ from Skyjo.src.turn_phase import TurnPhase
 DRILL_DRAW_REWARD = 0.05
 DRILL_SWAP_REWARD = 0.1
 DRILL_BAD_CLEAR_REWARD = 0.05
+# Pairing only *sets up* a clear, so it pays half of what finishing one pays.
+DRILL_BUILD_DRAW_REWARD = 0.025
+DRILL_BUILD_SWAP_REWARD = 0.05
+
+# Share of resets that drill pair building instead of finishing a column.
+DEFAULT_BUILD_PAIR_PROB = 0.5
 
 # Fraction of non-target player cells that stay revealed (the rest are hidden).
 _PLAYER_REVEAL_PROB = 0.7
+# Pair building starts from a mostly-covered board, so outside the pair column
+# only a few distractors are face up.
+_BUILD_REVEAL_PROB = 0.25
+
+
+class DrillMode(Enum):
+    CLEAR_COLUMN = auto()
+    BUILD_PAIR = auto()
 
 
 class ColumnClearDrillEnv(Env):
-    """Two-step drill: take useful discard, then swap it into the clearing slot."""
+    """Two-step drill: take the useful discard, then swap it into the right slot."""
 
     metadata = {"render_modes": []}
 
-    def __init__(self):
+    def __init__(self, build_pair_prob: float = DEFAULT_BUILD_PAIR_PROB):
         super().__init__()
         self.observation_space = spaces.Box(
             low=-0.5, high=1.5, shape=(OBS_SIZE,), dtype=np.float32
         )
         self.action_space = spaces.Discrete(NUM_ACTIONS)
+        self._build_pair_prob = build_pair_prob
         self._rng = np.random.default_rng()
-        self._target_pos = (0, 0)
+        self._mode = DrillMode.CLEAR_COLUMN
+        self._reward_positions: frozenset[tuple[int, int]] = frozenset()
         self._grid = []
         self._opponent_grid = []
         self._draw_pile = []
@@ -59,29 +86,39 @@ class ColumnClearDrillEnv(Env):
         if seed is not None:
             self._rng = np.random.default_rng(seed)
 
-        target_col = int(self._rng.integers(0, 4))
-        missing_row = int(self._rng.integers(0, 3))
-        # 0-value clears are neutral in-game, so never use them as a target:
-        # the drill should only ever teach "good clear" (>0) or "avoid bad
-        # clear" (<0) decisions.
-        target_value = int(self._rng.choice(CARD_VALUES))
-        while target_value == 0:
-            target_value = int(self._rng.choice(CARD_VALUES))
-
-        self._target_value = target_value
-        self._target_pos = (missing_row, target_col)
-        self._grid, self._opponent_grid, discard_pile, self._draw_pile = (
-            _make_drill_state(self._rng, target_col, missing_row, target_value)
+        self._mode = (
+            DrillMode.BUILD_PAIR
+            if self._rng.random() < self._build_pair_prob
+            else DrillMode.CLEAR_COLUMN
         )
+        target_col = int(self._rng.integers(0, 4))
+        # The gap to fill (CLEAR_COLUMN) resp. the seed card's row (BUILD_PAIR).
+        target_row = int(self._rng.integers(0, 3))
+        self._target_value = _pick_target_value(self._rng)
+
+        make_state = (
+            _make_build_pair_state
+            if self._mode is DrillMode.BUILD_PAIR
+            else _make_drill_state
+        )
+        self._grid, self._opponent_grid, discard_pile, self._draw_pile = make_state(
+            self._rng, target_col, target_row, self._target_value
+        )
+        self._reward_positions = self._rewarded_swaps(target_col, target_row)
         self._phase = TurnPhase.CHOOSE_DRAW
         self._current_mask = self._draw_mask()
         return encode_observation(self._observation(discard_top=discard_pile[-1])), {}
 
     def step(self, action_int):
         action = int_to_action(int(action_int))
+        draw_reward, swap_reward = self._reward_scale()
 
         if self._phase == TurnPhase.CHOOSE_DRAW:
-            if self._target_value < 0:
+            # Only finishing a column can be a trap at the draw step. The card
+            # that starts a pair is worth taking either way — a low one lowers
+            # our score, a high one buys the pair — so BUILD_PAIR always drills
+            # the placement instead.
+            if self._mode is DrillMode.CLEAR_COLUMN and self._target_value < 0:
                 # Completing this column would *raise* our score: the right move
                 # is to leave it and draw a hidden card instead.
                 reward = (
@@ -98,7 +135,7 @@ class ColumnClearDrillEnv(Env):
                     encode_observation(
                         self._observation(hand_card=Card(self._target_value, True))
                     ),
-                    DRILL_DRAW_REWARD,
+                    draw_reward,
                     False,
                     False,
                     {},
@@ -106,18 +143,44 @@ class ColumnClearDrillEnv(Env):
 
             return (
                 np.zeros(OBS_SIZE, dtype=np.float32),
-                -DRILL_DRAW_REWARD,
+                -draw_reward,
                 True,
                 False,
                 {},
             )
 
-        correct_action = Action(ActionType.SWAP_CARD, pos=self._target_pos)
-        reward = DRILL_SWAP_REWARD if action == correct_action else -DRILL_SWAP_REWARD
+        correct = (
+            action.type == ActionType.SWAP_CARD and action.pos in self._reward_positions
+        )
+        reward = swap_reward if correct else -swap_reward
         return np.zeros(OBS_SIZE, dtype=np.float32), reward, True, False, {}
 
     def action_masks(self) -> np.ndarray:
         return self._current_mask
+
+    def _rewarded_swaps(
+        self, target_col: int, target_row: int
+    ) -> frozenset[tuple[int, int]]:
+        """Swap slots that earn the positive reward for this episode."""
+        if self._mode is DrillMode.CLEAR_COLUMN:
+            return frozenset({(target_row, target_col)})
+
+        if self._target_value > 0:
+            # Either remaining slot of the column lines the pair up.
+            return frozenset((row, target_col) for row in range(3) if row != target_row)
+
+        # A column of negative cards is a trap: the engine removes uniform
+        # columns automatically, so completing one would give the minus points
+        # back. Keep the low card anywhere but next to its match.
+        return frozenset(
+            (row, col) for row in range(3) for col in range(4) if col != target_col
+        )
+
+    def _reward_scale(self) -> tuple[float, float]:
+        """(draw, swap) reward magnitudes for the current scenario."""
+        if self._mode is DrillMode.BUILD_PAIR:
+            return DRILL_BUILD_DRAW_REWARD, DRILL_BUILD_SWAP_REWARD
+        return DRILL_DRAW_REWARD, DRILL_SWAP_REWARD
 
     def _draw_mask(self) -> np.ndarray:
         mask = np.zeros(NUM_ACTIONS, dtype=np.int8)
@@ -161,11 +224,23 @@ def mask_fn(env: Env) -> np.ndarray:
     return getattr(env, "action_masks")()
 
 
-def make_column_clear_drill_env():
+def make_column_clear_drill_env(build_pair_prob: float = DEFAULT_BUILD_PAIR_PROB):
     def _init():
-        return ActionMasker(ColumnClearDrillEnv(), mask_fn)
+        return ActionMasker(ColumnClearDrillEnv(build_pair_prob), mask_fn)
 
     return _init
+
+
+def _pick_target_value(rng) -> int:
+    """A non-zero card value.
+
+    0-value columns are score-neutral in-game, so they teach neither "good clear"
+    (>0) nor "avoid this one" (<0) — the drill never uses them as a target.
+    """
+    value = 0
+    while value == 0:
+        value = int(rng.choice(CARD_VALUES))
+    return value
 
 
 def _make_drill_state(rng, target_col: int, missing_row: int, target_value: int):
@@ -197,19 +272,75 @@ def _make_drill_state(rng, target_col: int, missing_row: int, target_value: int)
                 face_up = bool(rng.random() < _PLAYER_REVEAL_PROB)
                 cards.append(Card(value, face_up=face_up))
         grid.append(cards)
+    _hide_accidental_clears(rng, grid)
 
-    opponent_grid: list[list[Card]] = []
+    opponent_grid = _make_opponent_grid(rng, budget)
+    discard_pile = [Card(target_value, face_up=True)]
+    draw_pile = _remaining_draw_pile([grid, opponent_grid], discard_pile)
+    return grid, opponent_grid, discard_pile, draw_pile
+
+
+def _make_build_pair_state(rng, pair_col: int, seed_row: int, pair_value: int):
+    """Mostly-covered board with one revealed card whose match is on the discard.
+
+    The two other cells of the pair column stay face down, so swapping the drawn
+    card into either of them lines the pair up. `pair_value` occurs nowhere else
+    on the board, which makes the pair column the only pairing site the agent can
+    see and keeps a third copy available in the draw pile.
+    """
+    budget = dict(INITIAL_CARD_COUNTS)
+
+    # The revealed seed card + its match on the discard top.
+    budget[pair_value] -= 2
+
+    grid: list[list[Card]] = []
+    for row in range(3):
+        cards = []
+        for col in range(4):
+            if col == pair_col and row == seed_row:
+                cards.append(Card(pair_value, face_up=True))
+                continue
+            value = _pick_value(rng, budget, exclude=frozenset({pair_value}))
+            budget[value] -= 1
+            # Both free pair-column slots stay hidden so neither is favoured by
+            # its face value.
+            face_up = col != pair_col and bool(rng.random() < _BUILD_REVEAL_PROB)
+            cards.append(Card(value, face_up=face_up))
+        grid.append(cards)
+    _hide_accidental_clears(rng, grid)
+
+    opponent_grid = _make_opponent_grid(rng, budget)
+    discard_pile = [Card(pair_value, face_up=True)]
+    draw_pile = _remaining_draw_pile([grid, opponent_grid], discard_pile)
+    return grid, opponent_grid, discard_pile, draw_pile
+
+
+def _make_opponent_grid(rng, budget: dict[int, int]) -> list[list[Card]]:
+    grid: list[list[Card]] = []
     for _ in range(3):
         cards = []
         for _ in range(4):
             value = _pick_value(rng, budget)
             budget[value] -= 1
             cards.append(Card(value, face_up=bool(rng.random() < 0.5)))
-        opponent_grid.append(cards)
+        grid.append(cards)
+    _hide_accidental_clears(rng, grid)
+    return grid
 
-    discard_pile = [Card(target_value, face_up=True)]
-    draw_pile = _remaining_draw_pile([grid, opponent_grid], discard_pile)
-    return grid, opponent_grid, discard_pile, draw_pile
+
+def _hide_accidental_clears(rng, grid: list[list[Card]]):
+    """Hide one card of any fully revealed uniform column.
+
+    Cell values are drawn independently, so a column can come out uniform by
+    chance — a state the engine would already have cleared away, and one the
+    agent must therefore never be trained on.
+    """
+    for col in range(4):
+        cards = [row[col] for row in grid]
+        if all(card.face_up for card in cards) and (
+            len({card.get_value() for card in cards}) == 1
+        ):
+            cards[int(rng.integers(0, 3))].face_up = False
 
 
 def _iter_grid_cards(grid: list[list[Card]]):

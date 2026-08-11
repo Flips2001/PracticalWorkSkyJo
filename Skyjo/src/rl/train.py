@@ -13,7 +13,10 @@ from stable_baselines3.common.callbacks import BaseCallback
 from tqdm import tqdm
 
 from Skyjo.src.rl.action_mapping import NUM_ACTIONS
-from Skyjo.src.rl.column_clear_drill_env import make_column_clear_drill_env
+from Skyjo.src.rl.column_clear_drill_env import (
+    DEFAULT_BUILD_PAIR_PROB,
+    make_column_clear_drill_env,
+)
 from Skyjo.src.rl.encoding import OBS_SIZE
 from Skyjo.src.rl.pettingzoo_env import COLUMN_CLEAR_REWARD_DIVISOR
 from Skyjo.src.rl.self_play_wrapper import make_env
@@ -36,6 +39,8 @@ EVAL_EVERY = 1_500_000
 EVAL_GAMES = 100
 NUM_PROCS = 8
 COLUMN_CLEAR_DRILL_ENVS = 1
+# Share of drill episodes spent building a pair rather than finishing a column.
+DRILL_BUILD_PAIR_PROB = DEFAULT_BUILD_PAIR_PROB
 DEFAULT_MODEL_PREFIX = "skyjo_ppo"
 
 LEARNING_RATE = 1e-4
@@ -300,6 +305,7 @@ class TqdmCallback(BaseCallback):
 def train(
     model_prefix=DEFAULT_MODEL_PREFIX,
     column_clear_drill_envs=COLUMN_CLEAR_DRILL_ENVS,
+    drill_build_pair_prob=DRILL_BUILD_PAIR_PROB,
 ):
     self_play_envs = NUM_PROCS - column_clear_drill_envs
     if self_play_envs <= 0:
@@ -331,6 +337,7 @@ def train(
             "num_procs": NUM_PROCS,
             "self_play_envs": self_play_envs,
             "column_clear_drill_envs": column_clear_drill_envs,
+            "drill_build_pair_prob": drill_build_pair_prob,
             "column_clear_reward_divisor": COLUMN_CLEAR_REWARD_DIVISOR,
             "obs_size": OBS_SIZE,
             "num_actions": NUM_ACTIONS,
@@ -352,7 +359,10 @@ def train(
             make_env(best_model_path=best_model_path, device=DEVICE)
             for _ in range(self_play_envs)
         ]
-        + [make_column_clear_drill_env() for _ in range(column_clear_drill_envs)]
+        + [
+            make_column_clear_drill_env(cfg.drill_build_pair_prob)
+            for _ in range(column_clear_drill_envs)
+        ]
     )
 
     policy_kwargs = dict(
@@ -386,7 +396,8 @@ def train(
     print(f"   Column clear reward divisor: {COLUMN_CLEAR_REWARD_DIVISOR:g}")
     print(
         f"   Envs: {self_play_envs} self-play | "
-        f"{column_clear_drill_envs} column-clear drill"
+        f"{column_clear_drill_envs} column-clear drill "
+        f"({cfg.drill_build_pair_prob:.0%} pair building, rest column finishing)"
     )
     print("   Self-play opponent: best model, every 10th move random\n")
 
@@ -450,8 +461,18 @@ if __name__ == "__main__":
         default=COLUMN_CLEAR_DRILL_ENVS,
         help="Number of column-clear drill envs; 0 disables the drill.",
     )
+    parser.add_argument(
+        "--drill-build-pair-prob",
+        type=float,
+        default=DRILL_BUILD_PAIR_PROB,
+        help=(
+            "Share of drill episodes that drill building a pair instead of "
+            "finishing a column (0 = only finishing, 1 = only building)."
+        ),
+    )
     cli_args = parser.parse_args()
     train(
         model_prefix=cli_args.model_prefix,
         column_clear_drill_envs=cli_args.drill_envs,
+        drill_build_pair_prob=cli_args.drill_build_pair_prob,
     )
