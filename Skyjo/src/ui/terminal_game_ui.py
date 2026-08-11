@@ -23,13 +23,14 @@ class TerminalGameUI:
         player_id: int,
         player_name: str,
         opponent_name: str = "Opponent",
+        analyze_mode: bool = False,
     ):
         self.stdscr = stdscr
         self.player_id = player_id
         self.player_name = player_name
         self.opponent_name = opponent_name
         self.renderer = TerminalRenderer(stdscr)
-        self.analyze_mode = False
+        self.analyze_mode = analyze_mode
         self._message = ""
         self._opponent_last_action = ""
         self._opponent_explanation = None

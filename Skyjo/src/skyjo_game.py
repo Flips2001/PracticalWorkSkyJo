@@ -377,6 +377,7 @@ class SkyjoGame:
         self,
         on_round_end: Optional[Callable[["SkyjoGame"], None]] = None,
         on_game_over: Optional[Callable[["SkyjoGame"], None]] = None,
+        setup_first_round: bool = True,
     ):
         """Play the full game.
 
@@ -385,9 +386,13 @@ class SkyjoGame:
                 when the game is over). Signature: ``(game: SkyjoGame) -> None``.
             on_game_over: Optional callback called once the game ends.
                 Signature: ``(game: SkyjoGame) -> None``.
+            setup_first_round: Pass ``False`` to play the first round from an
+                externally prepared position (see ``play_round``).
         """
+        setup_round = setup_first_round
         while not self.game_state.is_game_over:
-            self.play_round()
+            self.play_round(setup_round=setup_round)
+            setup_round = True
             self.game_state.game_over()
 
             if not self.game_state.is_game_over and on_round_end is not None:
@@ -401,12 +406,20 @@ class SkyjoGame:
             self.game_state.all_player_final_scores,
         )
 
-    def play_round(self):
+    def play_round(self, setup_round: bool = True):
+        """Play one round.
+
+        Args:
+            setup_round: Pass ``False`` to keep the current grids, piles and
+                current player instead of dealing a fresh round, so the round is
+                played out from a position prepared by the caller.
+        """
         # Reset the final turn phase at the start of the round
         self.game_state.final_turn_phase = False
         self.game_state.players_to_finish = set()
 
-        self.start_round()
+        if setup_round:
+            self.start_round()
 
         round_over = False
         num_players = len(self.players)

@@ -154,6 +154,22 @@ def test_a_key_toggles_analyze_mode(terminal_player, mock_stdscr, mock_observati
     assert terminal_player.ui.analyze_mode is True
 
 
+def test_analyze_mode_can_start_enabled(mock_stdscr):
+    with (
+        patch("Skyjo.src.ui.terminal_ui.init_colors"),
+        patch("curses.curs_set"),
+    ):
+        ui = TerminalGameUI(
+            stdscr=mock_stdscr,
+            player_id=1,
+            player_name="You",
+            analyze_mode=True,
+        )
+
+    assert ui.analyze_mode is True
+    assert "Analyze: ON" in ui._help_text()
+
+
 def test_action_hooks_store_analysis_even_when_analyze_is_off(terminal_player):
     acting = MagicMock()
     acting.player_id = 1

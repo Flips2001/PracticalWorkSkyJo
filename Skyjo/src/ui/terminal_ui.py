@@ -432,7 +432,7 @@ class TerminalRenderer:
 
         self._safe_addstr(row, col, "Discard counts:", curses.color_pair(COLOR_TITLE))
         self._safe_addstr(
-            row + 1, col, "left:", curses.color_pair(COLOR_DEFAULT) | curses.A_DIM
+            row + 1, col, "used:", curses.color_pair(COLOR_DEFAULT) | curses.A_DIM
         )
         x = col + 16
         for value, count in zip(_CARD_VALUES, counts):

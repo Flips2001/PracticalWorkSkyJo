@@ -24,3 +24,43 @@ Press `a` in-game to toggle analyze mode and inspect the RL player one action
 at a time. While enabled, each RL sub-action pauses until Enter is pressed,
 and the terminal UI shows the decision-time board with an integrated-gradients
 heatmap for that move (green = little influence, red = much influence).
+
+## Observe the agent in a scenario
+A scenario is a hand-built position - your grid, the agent's grid, the discard
+pile and optionally the next cards off the draw pile - for probing a particular
+RL behavior in the same terminal UI. Every included scenario starts with the
+agent's decision. Its briefing explains why that decision is interesting to
+observe. Analyze mode starts enabled so each agent action pauses with its
+integrated-gradients explanation; after the opening move, you play the opposing
+side normally. Press `a` if you want to turn analysis off.
+
+Each scenario lives in its own file under `Skyjo/scenarios/` and is runnable on
+its own:
+
+```bash
+python -m Skyjo.scenarios.column_clear_with_twelves
+```
+
+List what is there:
+
+```bash
+python -m Skyjo.scenarios
+```
+
+By default a scenario plays the one round from its position and then reports the
+score; add `--full-game` to carry on with normally dealt rounds until someone
+reaches 100. `--seed` re-rolls the face-down cards the scenario left open and
+`--model` picks a different checkpoint.
+
+### Writing one
+Copy any file in `Skyjo/scenarios/` and change the data. Put the decision under
+test on `opponent_grid` (the RL agent's board), and leave `first_player` as
+`"agent"`. Describe the competing incentives and why the policy's choice is
+informative rather than instructing the human which move to make.
+
+Grid entries are `5` for a face-up 5, `"5?"` for a face-down card that turns out
+to be a 5, and `"?"` for a face-down card whose value is drawn from what is left
+in the deck. Rows shorter than four cards model a column that was already
+cleared. Every named card is taken out of one real 150 card deck, so an impossible
+position (six -2s, a column the game would clear immediately) is rejected with an
+explanation instead of quietly distorting the counts the agent reasons about.
