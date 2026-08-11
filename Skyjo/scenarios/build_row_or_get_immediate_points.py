@@ -16,7 +16,6 @@ SCENARIO = Scenario(
         ["?", "?", "?", 7],
     ],
     discard=[4],
-    draw=[],
     first_player="agent",
     seed=12,
 )
