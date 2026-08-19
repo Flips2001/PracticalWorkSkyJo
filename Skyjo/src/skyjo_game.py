@@ -5,7 +5,7 @@ from Skyjo.src.action import Action
 from Skyjo.src.action_type import ActionType
 from Skyjo.src.card import Card
 from Skyjo.src.game_action_hooks import GameActionHooks
-from Skyjo.src.game_state import ColumnClearStats, GameState
+from Skyjo.src.game_state import ColumnClearStats, GameState, RoundResult
 from Skyjo.src.observation import Observation
 from Skyjo.src.player_state import PlayerState
 from Skyjo.src.players.player import Player
@@ -273,6 +273,9 @@ class SkyjoGame:
         self.game_state.current_player_id = self._determine_starting_player()
         self.game_state.discard_pile.append(self.game_state.draw_card())
         self.game_state.discard_pile[-1].reveal()
+        round_started = getattr(self.action_hooks, "round_started", None)
+        if round_started is not None:
+            round_started(self)
 
     def _determine_starting_player(self) -> int:
         """
@@ -358,7 +361,7 @@ class SkyjoGame:
             + clear_stats.removed_card_value_sum
         )
 
-    def reset(self):
+    def reset(self) -> RoundResult:
         player_states = self.get_all_player_states()
         for player, player_state in zip(self.players, player_states):
             for row in player_state.grid:
@@ -370,8 +373,17 @@ class SkyjoGame:
             )
             self._record_column_clear_stats(player.player_id, clear_stats)
 
-        # Finish scoring and prepare for next round
-        self.game_state.finish_round_and_calculate_stats(player_states)
+        # Finish scoring and prepare for next round. A UI may pause at the
+        # scored, fully revealed board before this call deals the next round.
+        round_scored = getattr(self.action_hooks, "round_scored", None)
+        return self.game_state.finish_round_and_calculate_stats(
+            player_states,
+            on_scored=(
+                (lambda result: round_scored(self, result))
+                if round_scored is not None
+                else None
+            ),
+        )
 
     def play_game(
         self,

@@ -25,6 +25,16 @@ at a time. While enabled, each RL sub-action pauses until Enter is pressed,
 and the terminal UI shows the decision-time board with an integrated-gradients
 heatmap for that move (green = little influence, red = much influence).
 
+## Alternate user interfaces
+
+`SkyjoGame` also exposes UI-neutral lifecycle hooks. `before_action` and
+`after_action` surround every legal sub-action, `round_started` exposes the
+newly dealt round and opening discard, and `round_scored` exposes the scored
+board before it is reset. A UI can block in these hooks while it animates, then
+resume the same authoritative `play_game()` loop. Players still select from the
+legal actions supplied by Skyjo, so an alternate UI does not need its own copy
+of the rules.
+
 ## Observe the agent in a scenario
 A scenario is a hand-built position - your grid, the agent's grid, the discard
 pile and optionally the next cards off the draw pile - for probing a particular

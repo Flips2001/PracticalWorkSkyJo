@@ -21,8 +21,10 @@ class PhillipsPlayer(Player):
     def __init__(self, player_id: int, player_name: str, cutoff: int = 2):
         super().__init__(player_id, player_name)
         self.cutoff = cutoff
+        self.last_rule = None
 
     def select_action(self, observation, legal_actions):
+        self.last_rule = None
 
         if observation.turn_phase == TurnPhase.CHOOSE_DRAW:
             # Choose to draw from discard pile if the top card has value cutoff or less
@@ -32,12 +34,14 @@ class PhillipsPlayer(Player):
             ):
                 for action in legal_actions:
                     if action.type == ActionType.DRAW_OPEN_CARD:
+                        self.last_rule = "take_low_open_card"
                         return action
 
             # Otherwise, choose to draw from draw pile
             else:
                 for action in legal_actions:
                     if action.type == ActionType.DRAW_HIDDEN_CARD:
+                        self.last_rule = "draw_from_deck"
                         return action
 
         if (
@@ -64,6 +68,7 @@ class PhillipsPlayer(Player):
             ):
                 for action in legal_actions:
                     if action.type == ActionType.SWAP_CARD and action.pos == pos:
+                        self.last_rule = "replace_highest_card"
                         return action
             # If the hand card is greater than cutoff, discard it and flip a random card
             elif (
@@ -72,6 +77,7 @@ class PhillipsPlayer(Player):
             ):
                 for action in legal_actions:
                     if action.type == ActionType.DISCARD_CARD:
+                        self.last_rule = "discard_high_card"
                         return action
             # Otherwise, exchange it with a hidden card in the grid
             else:
@@ -86,9 +92,11 @@ class PhillipsPlayer(Player):
                 )
                 for action in legal_actions:
                     if action.type == ActionType.SWAP_CARD and action.pos == pos:
+                        self.last_rule = "cover_hidden_card"
                         return action
 
         # Always select a random first legal action
         if not legal_actions:
             raise ValueError("No legal actions available to select from.")
+        self.last_rule = "free_choice"
         return random.choice(legal_actions)

@@ -57,13 +57,30 @@ def test_finish_round_and_calculate_stats(game_state):
     game_state.discard_pile = []
     game_state.first_finisher_id = 1
 
-    game_state.finish_round_and_calculate_stats([player1, player2])
+    result = game_state.finish_round_and_calculate_stats([player1, player2])
 
     assert game_state.round_number == 2
     assert game_state.all_player_final_scores == [50, 70]
     assert game_state.final_turn_phase is False
     assert getattr(game_state, "first_finisher_id", None) is None
     assert game_state.previous_round_finisher_id == 1
+    assert result.game_over is False
+    assert result.winner_id is None
+
+
+def test_round_result_reports_game_over(game_state):
+    player1 = PlayerState(player_id=0)
+    player2 = PlayerState(player_id=1)
+    player1.grid = [[Card(10, face_up=True) for _ in range(4)] for _ in range(3)]
+    player2.grid = [[Card(0, face_up=True) for _ in range(4)] for _ in range(3)]
+    player1.set_final_game_score(90)
+    game_state.draw_pile = [Card(0) for _ in range(126)]
+
+    result = game_state.finish_round_and_calculate_stats([player1, player2])
+
+    assert result.total_scores == (210, 0)
+    assert result.game_over is True
+    assert result.winner_id == 1
 
 
 def test_set_final_game_scores(game_state):

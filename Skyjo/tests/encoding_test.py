@@ -7,6 +7,7 @@ from Skyjo.src.turn_phase import TurnPhase
 from Skyjo.src.rl.encoding import (
     OBS_SIZE,
     encode_observation,
+    encode_observation_values,
     get_observation_space,
     normalize_card_value,
 )
@@ -53,6 +54,12 @@ class TestNormalizeCardValue:
 
 
 class TestEncodeObservation:
+    def test_python_values_match_numpy_encoding(self):
+        obs = _make_obs()
+        assert encode_observation_values(obs) == pytest.approx(
+            encode_observation(obs).tolist()
+        )
+
     def test_output_shape(self):
         obs = _make_obs()
         vec = encode_observation(obs)

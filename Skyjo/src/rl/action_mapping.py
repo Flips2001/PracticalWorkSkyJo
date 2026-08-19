@@ -9,7 +9,6 @@ Action space (27 actions total):
   15-26: SWAP_CARD at positions (row, col) for 3x4 grid (row-major)
 """
 
-import numpy as np
 from typing import List, Tuple
 
 from Skyjo.src.action import Action
@@ -60,8 +59,10 @@ def int_to_action(action_int: int) -> Action:
     raise ValueError(f"Invalid action int: {action_int}")
 
 
-def legal_actions_mask(legal_actions: List[Action]) -> np.ndarray:
+def legal_actions_mask(legal_actions: List[Action]):
     """Returns a binary mask of shape (NUM_ACTIONS,) indicating legal actions."""
+    import numpy as np
+
     mask = np.zeros(NUM_ACTIONS, dtype=np.int8)
     for action in legal_actions:
         mask[action_to_int(action)] = 1

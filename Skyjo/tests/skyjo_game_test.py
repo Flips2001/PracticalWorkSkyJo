@@ -51,10 +51,35 @@ class RecordingActionHooks:
     def after_action(self, game, player, action):
         self.events.append(("after", player, action, self._hand_value(game)))
 
+    def round_started(self, game):
+        self.events.append(
+            (
+                "round_started",
+                game.game_state.current_player_id,
+                game.game_state.discard_pile[-1].get_value(),
+            )
+        )
+
     @staticmethod
     def _hand_value(game):
         hand_card = game.game_state.hand_card
         return hand_card.get_value() if hand_card is not None else None
+
+
+class RecordingRoundHooks(RecordingActionHooks):
+    def __init__(self):
+        super().__init__()
+        self.scored = None
+
+    def round_scored(self, game, result):
+        self.scored = (
+            game.game_state.round_number,
+            result,
+            tuple(
+                tuple(tuple(card.get_value() for card in row) for row in state.grid)
+                for state in game.get_all_player_states()
+            ),
+        )
 
 
 def grid_from_values(values):
@@ -409,3 +434,71 @@ def test_final_reveal_removes_uniform_columns_before_scoring(two_players):
     )
     assert game.total_columns_cleared[0] == 1
     assert game.total_column_clear_value_sum[0] == 15
+
+
+def test_round_scored_hook_sees_result_and_revealed_board_before_redeal():
+    hooks = RecordingRoundHooks()
+    game = SkyjoGame(action_hooks=hooks)
+    p0 = TestPlayer(0, "P0", plan=[])
+    p1 = TestPlayer(1, "P1", plan=[])
+    game.add_player(p0)
+    game.add_player(p1)
+    game.get_player_state(p0).grid = grid_from_values(
+        [[5, 1, 2, 3], [5, 4, 5, 6], [5, 7, 8, 9]]
+    )
+    game.get_player_state(p1).grid = grid_from_values(
+        [[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12]]
+    )
+    game.game_state.draw_pile = [Card(0) for _ in range(126)]
+    game.game_state.discard_pile = []
+
+    returned = game.reset()
+
+    scored_round, result, revealed_grids = hooks.scored
+    assert result is returned
+    assert scored_round == 1
+    assert result.round_number == 1
+    assert result.round_scores == (45, 78)
+    assert result.total_scores == (45, 78)
+    assert result.doubled_player_id is None
+    assert result.game_over is False
+    assert result.winner_id is None
+    assert revealed_grids[0] == ((1, 2, 3), (4, 5, 6), (7, 8, 9))
+    assert revealed_grids[1] == ((1, 2, 3, 4), (5, 6, 7, 8), (9, 10, 11, 12))
+    assert game.game_state.round_number == 2
+    assert all(
+        card.is_hidden()
+        for state in game.get_all_player_states()
+        for row in state.grid
+        for card in row
+    )
+
+
+def test_round_started_hook_sees_opening_discard_and_starting_player():
+    hooks = RecordingActionHooks()
+    game = SkyjoGame(action_hooks=hooks)
+    p0 = TestPlayer(
+        0,
+        "P0",
+        plan=[
+            Action(ActionType.FLIP_CARD, (0, 0)),
+            Action(ActionType.FLIP_CARD, (0, 1)),
+        ],
+    )
+    p1 = TestPlayer(
+        1,
+        "P1",
+        plan=[
+            Action(ActionType.FLIP_CARD, (0, 0)),
+            Action(ActionType.FLIP_CARD, (0, 1)),
+        ],
+    )
+    game.add_player(p0)
+    game.add_player(p1)
+
+    game.start_round()
+
+    assert hooks.events[-1][0] == "round_started"
+    assert hooks.events[-1][1] == game.game_state.current_player_id
+    assert hooks.events[-1][2] == game.game_state.discard_pile[-1].get_value()
+    assert game.game_state.phase == TurnPhase.CHOOSE_DRAW

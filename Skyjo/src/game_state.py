@@ -1,6 +1,6 @@
 import random
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Callable, List, Optional
 from Skyjo.src.card import Card
 from Skyjo.src.player_state import PlayerState
 from Skyjo.src.turn_phase import TurnPhase
@@ -9,11 +9,23 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+TARGET_SCORE = 100
+
 
 @dataclass(frozen=True)
 class ColumnClearStats:
     columns_removed: int = 0
     removed_card_value_sum: int = 0
+
+
+@dataclass(frozen=True)
+class RoundResult:
+    round_number: int
+    round_scores: tuple[int, ...]
+    total_scores: tuple[int, ...]
+    doubled_player_id: Optional[int]
+    game_over: bool
+    winner_id: Optional[int]
 
 
 @dataclass
@@ -222,9 +234,14 @@ class GameState:
         # Round not over yet
         return False
 
-    def finish_round_and_calculate_stats(self, player_states: List[PlayerState]):
+    def finish_round_and_calculate_stats(
+        self,
+        player_states: List[PlayerState],
+        on_scored: Optional[Callable[[RoundResult], None]] = None,
+    ) -> RoundResult:
 
         round_scores = [ps.get_round_score() for ps in player_states]
+        doubled_player_id = None
 
         if self.first_finisher_id is not None:
             first_score = round_scores[self.first_finisher_id]
@@ -236,6 +253,7 @@ class GameState:
                     if i != self.first_finisher_id
                 ):
                     round_scores[self.first_finisher_id] *= 2
+                    doubled_player_id = self.first_finisher_id
 
         for i, ps in enumerate(player_states):
             ps.set_final_game_score(ps.get_final_game_score() + round_scores[i])
@@ -246,6 +264,28 @@ class GameState:
             self.round_number,
             self.all_player_final_scores,
         )
+
+        game_over = any(score >= TARGET_SCORE for score in self.all_player_final_scores)
+        lowest_score = min(self.all_player_final_scores) if game_over else None
+        winners = (
+            [
+                player_id
+                for player_id, score in enumerate(self.all_player_final_scores)
+                if score == lowest_score
+            ]
+            if game_over
+            else []
+        )
+        result = RoundResult(
+            round_number=self.round_number,
+            round_scores=tuple(round_scores),
+            total_scores=tuple(self.all_player_final_scores),
+            doubled_player_id=doubled_player_id,
+            game_over=game_over,
+            winner_id=winners[0] if len(winners) == 1 else None,
+        )
+        if on_scored is not None:
+            on_scored(result)
 
         self.reset_deck_from_all_cards(player_states)
 
@@ -258,7 +298,8 @@ class GameState:
         self.round_number += 1
         self.first_finisher_id = None
         self.final_turn_phase = False
+        return result
 
     def game_over(self):
-        if any(score >= 100 for score in self.all_player_final_scores):
+        if any(score >= TARGET_SCORE for score in self.all_player_final_scores):
             self.is_game_over = True

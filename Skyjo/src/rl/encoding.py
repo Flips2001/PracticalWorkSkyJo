@@ -11,9 +11,7 @@ Each grid slot is encoded as a (value, is_revealed) pair:
   - Removed column: (normalized(0), 1.0) — see _encode_grid() for details.
 """
 
-import numpy as np
-from gymnasium import spaces
-from typing import Optional
+from typing import MutableSequence, Optional
 
 from Skyjo.src.observation import Observation, ObservedCard
 from Skyjo.src.turn_phase import TurnPhase
@@ -65,7 +63,7 @@ def initial_expected_card_value() -> float:
 
 def _encode_grid(
     grid: Optional[tuple[tuple[ObservedCard, ...], ...]],
-    obs_vec: np.ndarray,
+    obs_vec: MutableSequence[float],
     offset: int,
 ):
     """Encode a 3×4 grid into obs_vec starting at offset.
@@ -93,7 +91,7 @@ def _encode_grid(
 
 
 def _encode_discard_pile_value_counts(
-    obs: Observation, obs_vec: np.ndarray, offset: int
+    obs: Observation, obs_vec: MutableSequence[float], offset: int
 ):
     """Encode current discard-pile counts relative to each initial count."""
     if not obs.discard_pile_value_counts:
@@ -106,8 +104,8 @@ def _encode_discard_pile_value_counts(
         obs_vec[offset + i] = obs.discard_pile_value_counts[i] / float(initial_count)
 
 
-def encode_observation(obs: Observation) -> np.ndarray:
-    """Encode an Observation into a flat float32 numpy array.
+def encode_observation_values(obs: Observation) -> list[float]:
+    """Encode an Observation into the framework's flat numeric representation.
 
     Layout (75 dims):
       0-23:  Own grid (12 slots × 2: value, revealed)
@@ -123,7 +121,7 @@ def encode_observation(obs: Observation) -> np.ndarray:
       60-74: Current discard-pile counts per value -2..12,
              normalized by each value's initial deck count
     """
-    vec = np.zeros(OBS_SIZE, dtype=np.float32)
+    vec = [0.0] * OBS_SIZE
 
     # Own grid (0-23)
     _encode_grid(obs.card_grid, vec, 0)
@@ -169,5 +167,14 @@ def encode_observation(obs: Observation) -> np.ndarray:
     return vec
 
 
-def get_observation_space() -> spaces.Box:
+def encode_observation(obs: Observation):
+    import numpy as np
+
+    return np.asarray(encode_observation_values(obs), dtype=np.float32)
+
+
+def get_observation_space():
+    import numpy as np
+    from gymnasium import spaces
+
     return spaces.Box(low=-0.5, high=1.5, shape=(OBS_SIZE,), dtype=np.float32)
