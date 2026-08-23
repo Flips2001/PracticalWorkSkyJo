@@ -24,6 +24,7 @@ from Skyjo.src.players.phillips_player import PhillipsPlayer
 from Skyjo.src.players.player import Player
 
 DEVICE = "cpu"
+TORCH_NUM_THREADS = 1
 CHECKPOINT_DIR = os.path.join(os.path.dirname(__file__), "checkpoints")
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 TENSORBOARD_DIR = os.path.join(os.path.dirname(__file__), "tb_logs")
@@ -348,6 +349,10 @@ def train(
     column_clear_drill_envs=COLUMN_CLEAR_DRILL_ENVS,
     drill_build_pair_prob=DRILL_BUILD_PAIR_PROB,
 ):
+    # This MLP's small operations are faster without PyTorch's 12-thread
+    # coordination overhead (measured on the target M3 Max).
+    torch.set_num_threads(TORCH_NUM_THREADS)
+
     self_play_envs = NUM_PROCS - column_clear_drill_envs
     if self_play_envs <= 0:
         raise ValueError("NUM_PROCS must be greater than column_clear_drill_envs")
@@ -384,6 +389,7 @@ def train(
             "primary_opponent": primary_name,
             "promotion_winrate": PROMOTION_WINRATE,
             "device": DEVICE,
+            "torch_num_threads": TORCH_NUM_THREADS,
         },
         sync_tensorboard=True,
     )
@@ -427,7 +433,8 @@ def train(
     print("🎮 Skyjo RL Training")
     print(f"   Model prefix: {model_prefix}")
     print(
-        f"   Device: {DEVICE} | Envs: {NUM_PROCS} | Steps: {total_timesteps/1e6:.0f}M"
+        f"   Device: {DEVICE} | Torch threads: {TORCH_NUM_THREADS} | "
+        f"Envs: {NUM_PROCS} | Steps: {total_timesteps/1e6:.0f}M"
     )
     print(f"   OBS_SIZE={OBS_SIZE} | Actions={NUM_ACTIONS}")
     print(

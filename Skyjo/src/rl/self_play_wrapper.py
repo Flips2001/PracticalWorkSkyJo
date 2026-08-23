@@ -138,6 +138,7 @@ def make_env(best_model_path: str, device: str = "cpu"):
     """Create a subprocess-safe single-agent self-play env factory."""
 
     def _init():
+        torch.set_num_threads(1)
         _configure_opponent_loader(best_model_path=best_model_path, device=device)
         env = SkyjoSelfPlayWrapper()
         return ActionMasker(env, mask_fn)
