@@ -18,7 +18,6 @@ from Skyjo.src.rl.column_clear_drill_env import (
     make_column_clear_drill_env,
 )
 from Skyjo.src.rl.encoding import OBS_SIZE
-from Skyjo.src.rl.pettingzoo_env import COLUMN_CLEAR_REWARD_DIVISOR
 from Skyjo.src.rl.self_play_wrapper import make_env
 from Skyjo.src.players.rl_player import RLPlayer
 from Skyjo.src.players.phillips_player import PhillipsPlayer
@@ -37,6 +36,10 @@ NUM_EVALS = 20
 SAVE_EVERY = 3_000_000
 EVAL_EVERY = 1_500_000
 EVAL_GAMES = 100
+# Win rate the current model must reach against the incumbent sparring partner
+# to replace it: high enough that noise alone rarely promotes, low enough that
+# real progress always does.
+PROMOTION_WINRATE = 55.0
 NUM_PROCS = 8
 COLUMN_CLEAR_DRILL_ENVS = 1
 # Share of drill episodes spent building a pair rather than finishing a column.
@@ -59,8 +62,25 @@ PPO_KWARGS = dict(
 
 
 def _best_model_path(model_prefix: str) -> str:
-    """Checkpoint path of the self-play opponent for a given model prefix."""
+    """Checkpoint path of the best-playing model, by the primary opponent.
+
+    Reporting only — this is what scenarios, competitions and the UI load, and
+    it never feeds back into training. The sparring partner is a separate
+    checkpoint, see `_opponent_model_path`.
+    """
     return os.path.join(CHECKPOINT_DIR, f"{model_prefix}_best")
+
+
+def _opponent_model_path(model_prefix: str) -> str:
+    """Checkpoint path of the current self-play sparring partner.
+
+    Deliberately separate from `_best_model_path`: promotion must depend only on
+    beating the incumbent. Gating it on the primary opponent's win rate can
+    deadlock, because training against a weak partner drives that win rate down,
+    and a falling win rate can never clear its own high-water mark — leaving the
+    partner frozen for the rest of the run.
+    """
+    return os.path.join(CHECKPOINT_DIR, f"{model_prefix}_opponent")
 
 
 def linear_schedule(initial_value: float):
@@ -220,6 +240,7 @@ class TqdmCallback(BaseCallback):
         opponents,
         primary_name,
         best_model_path,
+        opponent_model_path,
         model_prefix,
         eval_every=EVAL_EVERY,
         save_every=SAVE_EVERY,
@@ -229,6 +250,7 @@ class TqdmCallback(BaseCallback):
         self.opponents = opponents
         self.primary_name = primary_name
         self.best_model_path = best_model_path
+        self.opponent_model_path = opponent_model_path
         self.model_prefix = model_prefix
         self.eval_every = eval_every
         self.save_every = save_every
@@ -237,6 +259,7 @@ class TqdmCallback(BaseCallback):
         self._last_save = 0
         self._best_key = (float("-inf"), float("-inf"))
         self.best_margin = float("-inf")
+        self.promotions = 0
 
     def _on_training_start(self):
         self.pbar = tqdm(
@@ -264,9 +287,9 @@ class TqdmCallback(BaseCallback):
             results = {
                 opp.name: evaluate_opponent(self.model, opp) for opp in self.opponents
             }
-            # Load the self-play opponent before the NEW BEST save below, so we
-            # compare against the best we just trained against
-            selfplay = load_selfplay_opponent(self.best_model_path)
+            # Measure against the incumbent sparring partner *before* promoting,
+            # so the gate below compares us to who we actually trained against.
+            selfplay = load_selfplay_opponent(self.opponent_model_path)
             if selfplay is not None:
                 results[selfplay.name] = evaluate_opponent(self.model, selfplay)
             primary = results[self.primary_name]
@@ -278,12 +301,30 @@ class TqdmCallback(BaseCallback):
                 for metric, value in result.items():
                     self.logger.record(f"eval/{name}/{metric}", value)
 
+            # Promote the sparring partner whenever we can beat it — kept
+            # independent of the primary opponent's result on purpose, see
+            # `_opponent_model_path`.
+            selfplay_result = results.get("selfplay")
+            promoted = (
+                selfplay_result is None  # no partner on disk yet — seed one
+                or selfplay_result["winrate"] >= PROMOTION_WINRATE
+            )
+            if promoted:
+                self.model.save(self.opponent_model_path)
+                self.promotions += 1
+            self.logger.record("selfplay/promotions", self.promotions)
+            self.logger.record("selfplay/promoted", int(promoted))
+
+            # Best-by-primary is reporting only; see `_best_model_path`.
             key = _selection_key(primary)
-            marker = ""
-            if key > self._best_key:
+            new_best = key > self._best_key
+            if new_best:
                 self._best_key = key
                 self.model.save(self.best_model_path)
-                marker = " 🏆 NEW BEST"
+
+            marker = " 🏆 NEW BEST" if new_best else ""
+            if promoted:
+                marker += " ⬆ promoted"
 
             summary = " | ".join(
                 f"{name}: Win={r['winrate']:.0f}% "
@@ -338,10 +379,10 @@ def train(
             "self_play_envs": self_play_envs,
             "column_clear_drill_envs": column_clear_drill_envs,
             "drill_build_pair_prob": drill_build_pair_prob,
-            "column_clear_reward_divisor": COLUMN_CLEAR_REWARD_DIVISOR,
             "obs_size": OBS_SIZE,
             "num_actions": NUM_ACTIONS,
             "primary_opponent": primary_name,
+            "promotion_winrate": PROMOTION_WINRATE,
             "device": DEVICE,
         },
         sync_tensorboard=True,
@@ -351,12 +392,13 @@ def train(
         model_prefix = f"sweep_{run.id}"
     run.config.update({"model_prefix": model_prefix}, allow_val_change=True)
     best_model_path = _best_model_path(model_prefix)
+    opponent_model_path = _opponent_model_path(model_prefix)
     net_arch = list(cfg.net_arch)
     total_timesteps = cfg.total_timesteps
 
     env = SubprocVecEnv(
         [
-            make_env(best_model_path=best_model_path, device=DEVICE)
+            make_env(best_model_path=opponent_model_path, device=DEVICE)
             for _ in range(self_play_envs)
         ]
         + [
@@ -390,22 +432,25 @@ def train(
     print(f"   OBS_SIZE={OBS_SIZE} | Actions={NUM_ACTIONS}")
     print(
         f"   Eval every {cfg.eval_every/1e6:.1f}M steps ({EVAL_GAMES} games) vs "
-        f"{', '.join(o.name for o in opponents)} + selfplay (current best); "
-        f"best = highest {primary_name} win rate"
+        f"{', '.join(o.name for o in opponents)} + the current sparring partner; "
+        f"best = highest {primary_name} win rate (reporting only)"
     )
-    print(f"   Column clear reward divisor: {COLUMN_CLEAR_REWARD_DIVISOR:g}")
     print(
         f"   Envs: {self_play_envs} self-play | "
         f"{column_clear_drill_envs} column-clear drill "
         f"({cfg.drill_build_pair_prob:.0%} pair building, rest column finishing)"
     )
-    print("   Self-play opponent: best model, every 10th move random\n")
+    print(
+        f"   Sparring partner: promoted whenever we beat it "
+        f">={PROMOTION_WINRATE:.0f}%, every 10th move random\n"
+    )
 
     callback = TqdmCallback(
         total_timesteps,
         opponents=opponents,
         primary_name=primary_name,
         best_model_path=best_model_path,
+        opponent_model_path=opponent_model_path,
         model_prefix=model_prefix,
         eval_every=cfg.eval_every,
         save_every=cfg.save_every,
@@ -417,16 +462,18 @@ def train(
 
     print(f"\n✅ Training complete. Final model: {final_path}")
     print(f"   Best {primary_name} win rate: {callback._best_key[0]:.0f}%")
+    print(f"   Sparring-partner promotions: {callback.promotions}")
 
     # Sweep objective: best margin vs the primary opponent seen during the run.
     if callback.best_margin > float("-inf"):
         run.summary["best/winrate"] = callback._best_key[0]
         run.summary["best/margin"] = callback.best_margin
+        run.summary["selfplay/promotions"] = callback.promotions
 
     # Final evaluation vs every opponent, including the self-play best.
     print("\n📊 Final Evaluation (200 games):")
     final_opponents = list(opponents)
-    selfplay = load_selfplay_opponent(best_model_path)
+    selfplay = load_selfplay_opponent(opponent_model_path)
     if selfplay is not None:
         final_opponents.append(selfplay)
     for opp in final_opponents:

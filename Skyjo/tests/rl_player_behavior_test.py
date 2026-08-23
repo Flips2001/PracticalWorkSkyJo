@@ -7,6 +7,13 @@ swaps it into the gap, removing the column. A model that did not would clear onl
 ~4% of these boards (random draw-open x random target slot), so requiring a clear
 majority is a strong, low-noise regression signal.
 
+The boards deliberately vary everything *around* the tactic — how deep the
+discard pile is, how much of the board is face up, and whether the slot to fill
+shows a junk card or is face down. That breadth is what makes this a test of the
+tactic rather than of the drill: a generator narrowed to the drill's own context
+would pass on a model that has merely learned to recognise that context, and
+such a model clears almost nothing in a real mid-round position. Keep it broad.
+
 The test skips when the checkpoint is absent or cannot be deserialised in the
 current environment (e.g. a numpy major-version mismatch with the trained
 artifact) — those are environment issues, not tactic regressions.
@@ -34,10 +41,13 @@ CHECKPOINT_PATH = (
 
 POSITIVE_CARD_VALUES = [value for value in CARD_VALUES if value > 0]
 
-RUNS = 20
+RUNS = 40
 # Well above the ~4% a random policy reaches; tighten after a local calibration
 # run if your checkpoint clears more reliably.
 MIN_CLEAR_RATE = 0.6
+# Deepest discard pile a board may be dealt, so the tactic gets exercised in
+# early-, mid- and late-round pile contexts.
+MAX_DISCARD_JUNK = 40
 
 
 class _PassivePlayer(Player):
@@ -51,37 +61,42 @@ def _pick_value(rng, budget, exclude=frozenset()):
 
 
 def _one_swap_from_clear_board(rng):
-    """A fully-revealed board whose single gap, once filled, clears a >0 column.
+    """A board whose single gap, once filled from the discard, clears a >0 column.
 
     Non-target columns are kept non-uniform, so the only column that can ever be
-    removed is the target one.
+    removed is the target one. The reveal fraction, the discard-pile depth and
+    whether the gap shows a junk card are all sampled per board — see the module
+    docstring for why that breadth is load-bearing.
     """
     budget = dict(INITIAL_CARD_COUNTS)
     target_col = int(rng.integers(0, 4))
     missing_row = int(rng.integers(0, 3))
     target_value = int(rng.choice(POSITIVE_CARD_VALUES))
+    gap_face_up = bool(rng.random() < 0.5)
+    reveal_prob = float(rng.uniform(0.3, 1.0))
 
     # Two target cards already in the column + the completing card on the discard.
     budget[target_value] -= 3
-    hidden_value = _pick_value(rng, budget, exclude=frozenset({target_value}))
-    budget[hidden_value] -= 1
+    gap_value = _pick_value(rng, budget, exclude=frozenset({target_value}))
+    budget[gap_value] -= 1
 
     grid: list[list[Card]] = [[None] * 4 for _ in range(3)]
     for col in range(4):
         for row in range(3):
             if col == target_col:
                 if row == missing_row:
-                    grid[row][col] = Card(hidden_value, face_up=False)
+                    grid[row][col] = Card(gap_value, face_up=gap_face_up)
                 else:
                     grid[row][col] = Card(target_value, face_up=True)
                 continue
             exclude = {target_value}
-            above = [grid[r][col].get_value() for r in range(row)]
+            # Compare by engine value: cells above may already be face down.
+            above = [grid[r][col]._get_value_for_engine() for r in range(row)]
             if len(above) == 2 and above[0] == above[1]:
                 exclude.add(above[0])  # don't let the third cell uniform the column
             value = _pick_value(rng, budget, exclude=frozenset(exclude))
             budget[value] -= 1
-            grid[row][col] = Card(value, face_up=True)
+            grid[row][col] = Card(value, face_up=bool(rng.random() < reveal_prob))
 
     opponent_grid = []
     for _ in range(3):
@@ -92,14 +107,22 @@ def _one_swap_from_clear_board(rng):
             row_cards.append(Card(value, face_up=bool(rng.random() < 0.5)))
         opponent_grid.append(row_cards)
 
-    discard_pile = [Card(target_value, face_up=True)]
+    # Junk under the completing card, so the pile looks like a real mid-round one.
+    discard_pile = []
+    for _ in range(int(rng.integers(0, MAX_DISCARD_JUNK + 1))):
+        value = _pick_value(rng, budget)
+        budget[value] -= 1
+        discard_pile.append(Card(value, face_up=True))
+    discard_pile.append(Card(target_value, face_up=True))
 
     remaining = dict(INITIAL_CARD_COUNTS)
     for board in (grid, opponent_grid):
         for board_row in board:
             for card in board_row:
                 remaining[card._get_value_for_engine()] -= 1
-    remaining[target_value] -= 1  # discard top
+    for card in discard_pile:
+        remaining[card.get_value()] -= 1
+    assert all(count >= 0 for count in remaining.values()), "board over-used the deck"
     draw_pile = [Card(v) for v, count in remaining.items() for _ in range(count)]
 
     return grid, opponent_grid, discard_pile, draw_pile

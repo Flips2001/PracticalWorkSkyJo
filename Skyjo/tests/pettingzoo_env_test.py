@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from Skyjo.src.game_state import ColumnClearStats
-from Skyjo.src.rl.pettingzoo_env import COLUMN_CLEAR_REWARD_DIVISOR, SkyjoEnv
+from Skyjo.src.rl.pettingzoo_env import SkyjoEnv
 from Skyjo.src.rl.action_mapping import NUM_ACTIONS
 
 
@@ -159,27 +159,25 @@ class TestSkyjoEnvGameplay:
             obs = env.observe(env.agent_selection)
             assert obs["action_mask"].sum() > 0
 
-    def test_step_rewards_positive_value_column_clear(self):
+    @pytest.mark.parametrize("removed_value_sum", [36, 3, -6])
+    def test_step_does_not_reward_column_clears(self, removed_value_sum):
+        """Clearing pays nothing directly, whatever it removes.
+
+        The reward for a clear must stay in the round-score term, which pays for
+        the lower score the clear produces. A per-clear reward scaled by removed
+        card value instead pays most for removing high cards, which makes
+        collecting high cards profitable in its own right.
+        """
         env = _env_with_column_clear_stats(
-            ColumnClearStats(columns_removed=1, removed_card_value_sum=36)
+            ColumnClearStats(
+                columns_removed=1, removed_card_value_sum=removed_value_sum
+            )
         )
 
         env.step(0)
 
-        expected = 36 / COLUMN_CLEAR_REWARD_DIVISOR
-        assert env._cumulative_rewards["player_0"] == pytest.approx(expected)
-        assert env._cumulative_rewards["player_1"] == pytest.approx(-expected)
-
-    def test_step_penalizes_negative_value_column_clear(self):
-        env = _env_with_column_clear_stats(
-            ColumnClearStats(columns_removed=1, removed_card_value_sum=-6)
-        )
-
-        env.step(0)
-
-        expected = -6 / COLUMN_CLEAR_REWARD_DIVISOR
-        assert env._cumulative_rewards["player_0"] == pytest.approx(expected)
-        assert env._cumulative_rewards["player_1"] == pytest.approx(-expected)
+        assert env._cumulative_rewards["player_0"] == pytest.approx(0.0)
+        assert env._cumulative_rewards["player_1"] == pytest.approx(0.0)
 
     def test_step_does_not_reward_when_no_column_clears(self):
         env = _env_with_column_clear_stats(ColumnClearStats())

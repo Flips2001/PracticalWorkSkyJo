@@ -11,10 +11,15 @@ Each reset samples one of two scenarios (see `DrillMode`):
 
 Rewards are deliberately kept on the same small scale as the real-game shaping
 (|reward| <= ~0.1) so that mixing this drill into the self-play vector env does
-not dominate PPO's advantage normalisation and drown out the win signal. The
-board is freshly randomised each reset (values, target column/row, target value,
-opponent grid) so the agent learns the *pattern* — "draw the open card that fits
-a column, then swap it into the right slot" — rather than one fixed layout.
+not dominate PPO's advantage normalisation and drown out the win signal.
+
+Everything the scenario does not pin down is randomised per reset — values,
+target column/row, target value, opponent grid, how much of the board is face
+up, whether the slot to fill is face down or shows a junk card, and how deep the
+discard pile is. The tactic has to be recognisable from the board pattern alone,
+so no other part of the observation may correlate with it: a constant would let
+the policy key on that instead and the behaviour would not survive outside the
+drill.
 """
 
 from enum import Enum, auto
@@ -47,11 +52,17 @@ DRILL_BUILD_SWAP_REWARD = 0.05
 # Share of resets that drill pair building instead of finishing a column.
 DEFAULT_BUILD_PAIR_PROB = 0.5
 
+# Everything below varies per episode; keep it that way. A value held constant
+# is a tell the policy can key the tactic on instead of the board pattern.
+_MAX_DISCARD_JUNK = 40
 # Fraction of non-target player cells that stay revealed (the rest are hidden).
-_PLAYER_REVEAL_PROB = 0.7
+_REVEAL_PROB_RANGE = (0.2, 0.9)
 # Pair building starts from a mostly-covered board, so outside the pair column
 # only a few distractors are face up.
-_BUILD_REVEAL_PROB = 0.25
+_BUILD_REVEAL_PROB_RANGE = (0.1, 0.5)
+# Share of CLEAR_COLUMN resets whose completing slot already shows a junk card
+# rather than being face down; both shapes occur in real positions.
+_FACE_UP_GAP_PROB = 0.5
 
 
 class DrillMode(Enum):
@@ -76,6 +87,7 @@ class ColumnClearDrillEnv(Env):
         self._reward_positions: frozenset[tuple[int, int]] = frozenset()
         self._grid = []
         self._opponent_grid = []
+        self._discard_pile = []
         self._draw_pile = []
         self._phase = TurnPhase.CHOOSE_DRAW
         self._target_value = 12
@@ -101,13 +113,16 @@ class ColumnClearDrillEnv(Env):
             if self._mode is DrillMode.BUILD_PAIR
             else _make_drill_state
         )
-        self._grid, self._opponent_grid, discard_pile, self._draw_pile = make_state(
-            self._rng, target_col, target_row, self._target_value
-        )
+        (
+            self._grid,
+            self._opponent_grid,
+            self._discard_pile,
+            self._draw_pile,
+        ) = make_state(self._rng, target_col, target_row, self._target_value)
         self._reward_positions = self._rewarded_swaps(target_col, target_row)
         self._phase = TurnPhase.CHOOSE_DRAW
         self._current_mask = self._draw_mask()
-        return encode_observation(self._observation(discard_top=discard_pile[-1])), {}
+        return encode_observation(self._observation()), {}
 
     def step(self, action_int):
         action = int_to_action(int(action_int))
@@ -131,10 +146,11 @@ class ColumnClearDrillEnv(Env):
             if action.type == ActionType.DRAW_OPEN_CARD:
                 self._phase = TurnPhase.HAVE_DRAWN_OPEN
                 self._current_mask = self._swap_mask()
+                # Taking the top card uncovers whatever lies under it, exactly as
+                # the real engine's DRAW_OPEN_CARD does.
+                hand_card = self._discard_pile.pop()
                 return (
-                    encode_observation(
-                        self._observation(hand_card=Card(self._target_value, True))
-                    ),
+                    encode_observation(self._observation(hand_card=hand_card)),
                     draw_reward,
                     False,
                     False,
@@ -195,9 +211,12 @@ class ColumnClearDrillEnv(Env):
                 mask[action_to_int(Action(ActionType.SWAP_CARD, pos=(row, col)))] = 1
         return mask
 
-    def _observation(
-        self, discard_top: Card | None = None, hand_card: Card | None = None
-    ) -> Observation:
+    def _observation(self, hand_card: Card | None = None) -> Observation:
+        """The drill board as the real engine would report it.
+
+        Discard top and the per-value pile counts are read off the actual pile,
+        so the observation is indistinguishable from a real mid-round one.
+        """
         return Observation(
             player_id=0,
             card_grid=self._grid,
@@ -207,11 +226,11 @@ class ColumnClearDrillEnv(Env):
                 self._round_score(self._grid),
                 self._round_score(self._opponent_grid),
             ],
-            discard_top=discard_top,
+            discard_top=self._discard_pile[-1] if self._discard_pile else None,
             draw_pile_size=len(self._draw_pile),
             turn_phase=self._phase,
             discard_pile_value_counts=[
-                int(discard_top is not None and value == discard_top.get_value())
+                sum(1 for card in self._discard_pile if card.get_value() == value)
                 for value in CARD_VALUES
             ],
         )
@@ -248,14 +267,17 @@ def _make_drill_state(rng, target_col: int, missing_row: int, target_value: int)
 
     The target value never appears in revealed non-target cells, so the target
     column is the unique column the drawn card can complete; other columns may
-    still show coincidental matches (useful distractors).
+    still show coincidental matches (useful distractors). The slot to fill is
+    face down or shows a junk card, since both shapes occur in real play.
     """
     budget = dict(INITIAL_CARD_COUNTS)
 
     # Two visible target cards in the column + one on the discard top.
     budget[target_value] -= 3
-    hidden_value = _pick_value(rng, budget, exclude=frozenset({target_value}))
-    budget[hidden_value] -= 1
+    gap_value = _pick_value(rng, budget, exclude=frozenset({target_value}))
+    budget[gap_value] -= 1
+    gap_face_up = bool(rng.random() < _FACE_UP_GAP_PROB)
+    reveal_prob = rng.uniform(*_REVEAL_PROB_RANGE)
 
     grid: list[list[Card]] = []
     for row in range(3):
@@ -263,19 +285,19 @@ def _make_drill_state(rng, target_col: int, missing_row: int, target_value: int)
         for col in range(4):
             if col == target_col:
                 if row == missing_row:
-                    cards.append(Card(hidden_value, face_up=False))
+                    cards.append(Card(gap_value, face_up=gap_face_up))
                 else:
                     cards.append(Card(target_value, face_up=True))
             else:
                 value = _pick_value(rng, budget, exclude=frozenset({target_value}))
                 budget[value] -= 1
-                face_up = bool(rng.random() < _PLAYER_REVEAL_PROB)
+                face_up = bool(rng.random() < reveal_prob)
                 cards.append(Card(value, face_up=face_up))
         grid.append(cards)
     _hide_accidental_clears(rng, grid)
 
     opponent_grid = _make_opponent_grid(rng, budget)
-    discard_pile = [Card(target_value, face_up=True)]
+    discard_pile = _make_discard_pile(rng, budget, target_value)
     draw_pile = _remaining_draw_pile([grid, opponent_grid], discard_pile)
     return grid, opponent_grid, discard_pile, draw_pile
 
@@ -292,6 +314,7 @@ def _make_build_pair_state(rng, pair_col: int, seed_row: int, pair_value: int):
 
     # The revealed seed card + its match on the discard top.
     budget[pair_value] -= 2
+    reveal_prob = rng.uniform(*_BUILD_REVEAL_PROB_RANGE)
 
     grid: list[list[Card]] = []
     for row in range(3):
@@ -304,15 +327,31 @@ def _make_build_pair_state(rng, pair_col: int, seed_row: int, pair_value: int):
             budget[value] -= 1
             # Both free pair-column slots stay hidden so neither is favoured by
             # its face value.
-            face_up = col != pair_col and bool(rng.random() < _BUILD_REVEAL_PROB)
+            face_up = col != pair_col and bool(rng.random() < reveal_prob)
             cards.append(Card(value, face_up=face_up))
         grid.append(cards)
     _hide_accidental_clears(rng, grid)
 
     opponent_grid = _make_opponent_grid(rng, budget)
-    discard_pile = [Card(pair_value, face_up=True)]
+    discard_pile = _make_discard_pile(rng, budget, pair_value)
     draw_pile = _remaining_draw_pile([grid, opponent_grid], discard_pile)
     return grid, opponent_grid, discard_pile, draw_pile
+
+
+def _make_discard_pile(rng, budget: dict[int, int], top_value: int) -> list[Card]:
+    """Discard pile of random depth with ``top_value`` face up on top.
+
+    The cards underneath shrink the draw pile and populate the per-value count
+    features, which is what stops the pile from identifying a drill board. Their
+    values are unconstrained: pile contents never change which move is correct.
+    """
+    pile = []
+    for _ in range(int(rng.integers(0, _MAX_DISCARD_JUNK + 1))):
+        value = _pick_value(rng, budget)
+        budget[value] -= 1
+        pile.append(Card(value, face_up=True))
+    pile.append(Card(top_value, face_up=True))
+    return pile
 
 
 def _make_opponent_grid(rng, budget: dict[int, int]) -> list[list[Card]]:

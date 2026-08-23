@@ -15,9 +15,16 @@ from Skyjo.src.rl.column_clear_drill_env import (
     DrillMode,
     _hide_accidental_clears,
 )
-from Skyjo.src.rl.encoding import OBS_SIZE, normalize_card_value
+from Skyjo.src.rl.encoding import (
+    CARD_VALUES,
+    INITIAL_CARD_COUNTS,
+    OBS_SIZE,
+    normalize_card_value,
+)
 
 ALL_POSITIONS = [(row, col) for row in range(3) for col in range(4)]
+# Encoding offset of the per-value discard-pile count features.
+DISCARD_COUNTS_OFFSET = 60
 
 
 def _legal_actions(env: ColumnClearDrillEnv):
@@ -312,3 +319,115 @@ def test_negative_build_pair_still_rewards_taking_the_open_card():
 
     assert reward == pytest.approx(DRILL_BUILD_DRAW_REWARD)
     assert terminated is False
+
+
+# --- Board context must vary. A constant is a shortcut the policy can key the
+# --- tactic on instead of the board pattern, and it will not transfer.
+
+
+def _discard_count_features(obs) -> list[float]:
+    return list(obs[DISCARD_COUNTS_OFFSET: DISCARD_COUNTS_OFFSET + len(CARD_VALUES)])
+
+
+@pytest.mark.parametrize("build_pair_prob", [0.0, 1.0])
+def test_discard_pile_depth_varies_across_resets(build_pair_prob):
+    """Pile depth must span early- to late-round values, not sit on one."""
+    env = ColumnClearDrillEnv(build_pair_prob=build_pair_prob)
+    depths = set()
+    for seed in range(30):
+        env.reset(seed=seed)
+        depths.add(len(env._discard_pile))
+
+    assert len(depths) > 5
+    assert max(depths) > 10
+
+
+@pytest.mark.parametrize("build_pair_prob", [0.0, 1.0])
+def test_discard_count_features_match_the_dealt_pile(build_pair_prob):
+    env = ColumnClearDrillEnv(build_pair_prob=build_pair_prob)
+
+    for seed in range(20):
+        obs, _ = env.reset(seed=seed)
+        expected = [
+            sum(1 for card in env._discard_pile if card.get_value() == value)
+            / INITIAL_CARD_COUNTS[value]
+            for value in CARD_VALUES
+        ]
+        assert _discard_count_features(obs) == pytest.approx(expected, abs=1e-6)
+
+
+def test_deep_pile_is_not_encoded_as_a_single_top_card():
+    """The count features must describe the whole pile, not just its top card."""
+    env = ColumnClearDrillEnv(build_pair_prob=0.0)
+    for seed in range(30):
+        obs, _ = env.reset(seed=seed)
+        if len(env._discard_pile) > 3:
+            assert sum(_discard_count_features(obs)) > max(
+                _discard_count_features(obs)
+            ), "a multi-card pile must register more than its top card"
+            return
+    raise AssertionError("no seed produced a discard pile deeper than 3 cards")
+
+
+def test_taking_the_open_card_uncovers_the_card_below_it():
+    env = ColumnClearDrillEnv(build_pair_prob=0.0)
+    for seed in range(30):
+        env.reset(seed=seed)
+        if len(env._discard_pile) < 2:
+            continue
+        below = env._discard_pile[-2].get_value()
+
+        obs, _, terminated, _, _ = env.step(
+            action_to_int(Action(ActionType.DRAW_OPEN_CARD))
+        )
+        if terminated:  # negative target: taking the card is the trap, skip
+            continue
+
+        assert obs[48] == pytest.approx(normalize_card_value(below))
+        assert obs[49] == pytest.approx(1.0)
+        assert obs[50] == pytest.approx(normalize_card_value(env._target_value))
+        return
+    raise AssertionError("no seed produced a positive target with a pile below top")
+
+
+def test_clear_column_deals_the_gap_both_face_up_and_face_down():
+    """Both shapes occur in real positions, so both must be drilled."""
+    env = ColumnClearDrillEnv(build_pair_prob=0.0)
+    gap_states = set()
+    for seed in range(30):
+        env.reset(seed=seed)
+        (gap_row, gap_col) = next(iter(env._reward_positions))
+        gap_states.add(env._grid[gap_row][gap_col].face_up)
+
+    assert gap_states == {True, False}
+
+
+def test_face_up_gap_still_rewards_filling_that_slot():
+    env = ColumnClearDrillEnv(build_pair_prob=0.0)
+    for seed in range(30):
+        env.reset(seed=seed)
+        if env._target_value < 0:
+            continue
+        (gap_row, gap_col) = next(iter(env._reward_positions))
+        if not env._grid[gap_row][gap_col].face_up:
+            continue
+
+        env.step(action_to_int(Action(ActionType.DRAW_OPEN_CARD)))
+        _, reward, terminated, _, _ = _swap(env, (gap_row, gap_col))
+
+        assert reward == pytest.approx(DRILL_SWAP_REWARD)
+        assert terminated is True
+        return
+    raise AssertionError("no seed produced a positive target with a face-up gap")
+
+
+def test_revealed_share_of_the_board_varies_across_resets():
+    env = ColumnClearDrillEnv(build_pair_prob=0.0)
+    revealed_counts = set()
+    for seed in range(30):
+        env.reset(seed=seed)
+        revealed_counts.add(
+            sum(env._grid[row][col].face_up for row, col in ALL_POSITIONS)
+        )
+
+    assert len(revealed_counts) > 3
