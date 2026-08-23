@@ -326,7 +326,7 @@ def test_negative_build_pair_still_rewards_taking_the_open_card():
 
 
 def _discard_count_features(obs) -> list[float]:
-    return list(obs[DISCARD_COUNTS_OFFSET: DISCARD_COUNTS_OFFSET + len(CARD_VALUES)])
+    return list(obs[DISCARD_COUNTS_OFFSET : DISCARD_COUNTS_OFFSET + len(CARD_VALUES)])
 
 
 @pytest.mark.parametrize("build_pair_prob", [0.0, 1.0])
