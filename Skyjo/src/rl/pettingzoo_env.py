@@ -127,6 +127,10 @@ class SkyjoEnv(AECEnv):
 
     def _handle_game_over(self):
         """Assign terminal +1/-1 rewards for a win and zero for a tie."""
+        # The last round's scores are final by now (round_number already
+        # advanced), so shape it like every other round — otherwise the
+        # deciding round would be the only one without the dense margin signal.
+        self._check_round_reward()
         scores = self.game.game_state.all_player_final_scores
         if scores and len(scores) >= 2:
             if scores[0] < scores[1]:

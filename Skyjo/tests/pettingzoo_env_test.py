@@ -30,10 +30,12 @@ def _env_with_column_clear_stats(stats: ColumnClearStats) -> SkyjoEnv:
     return env
 
 
-def _env_with_final_scores(scores: list[int]) -> SkyjoEnv:
+def _env_with_final_scores(scores: list[int], round_number: int = 1) -> SkyjoEnv:
     env = SkyjoEnv()
     env.game = SimpleNamespace(
-        game_state=SimpleNamespace(all_player_final_scores=scores)
+        game_state=SimpleNamespace(
+            all_player_final_scores=scores, round_number=round_number
+        )
     )
     return env
 
@@ -100,6 +102,19 @@ class TestSkyjoEnvGameplay:
 
         assert env.rewards == expected_rewards
         assert all(env.terminations.values())
+
+    def test_game_over_shapes_the_final_round_too(self):
+        """The deciding round gets the same delta/50 shaping as every other one.
+
+        Totals moved 0->10 vs 0->20 in the last round, so player_0 gets the
+        round shaping (20-10)/50 on top of the +1 for winning.
+        """
+        env = _env_with_final_scores([10, 20], round_number=2)
+
+        env._handle_game_over()
+
+        assert env.rewards["player_0"] == pytest.approx(1.0 + 10 / 50.0)
+        assert env.rewards["player_1"] == pytest.approx(-1.0 - 10 / 50.0)
 
     def test_step_with_legal_action(self):
         env = SkyjoEnv()
