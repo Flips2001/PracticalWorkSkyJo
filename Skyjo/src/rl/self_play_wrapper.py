@@ -63,14 +63,23 @@ def _get_opponent_action(env: SkyjoEnv) -> int:
             0
         )
         mask_t = torch.as_tensor(mask, dtype=torch.bool).unsqueeze(0)
-        with torch.no_grad():
-            dist = _opponent_model.policy.get_distribution(obs_t)
-            dist.apply_masking(mask_t)
-            action = dist.sample()
+        with torch.inference_mode():
+            probabilities = _opponent_action_probabilities(
+                _opponent_model.policy, obs_t, mask_t
+            )
+            action = torch.multinomial(probabilities, 1)
         return int(action.item())
 
     legal = np.where(mask == 1)[0]
     return int(np.random.choice(legal))
+
+
+def _opponent_action_probabilities(policy, observations, masks):
+    """Return the same masked probabilities as MaskablePPO without wrappers."""
+    features = policy.extract_features(observations)
+    latent = policy.mlp_extractor.forward_actor(features)
+    logits = policy.action_net(latent)
+    return torch.softmax(logits.masked_fill(~masks, -1e8), dim=-1)
 
 
 def _play_opponent_turns(env: SkyjoEnv) -> None:

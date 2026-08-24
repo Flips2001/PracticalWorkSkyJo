@@ -41,18 +41,21 @@ EVAL_GAMES = 100
 # to replace it: high enough that noise alone rarely promotes, low enough that
 # real progress always does.
 PROMOTION_WINRATE = 55.0
-NUM_PROCS = 8
-COLUMN_CLEAR_DRILL_ENVS = 1
+# Keep the 32,768-transition rollout and 1/8 drill mix while using all CPU cores.
+NUM_PROCS = 16
+COLUMN_CLEAR_DRILL_ENVS = 2
 # Share of drill episodes spent building a pair rather than finishing a column.
 DRILL_BUILD_PAIR_PROB = DEFAULT_BUILD_PAIR_PROB
 DEFAULT_MODEL_PREFIX = "skyjo_ppo"
 
-LEARNING_RATE = 1e-4
+# The larger minibatch removes optimizer overhead; the scaled LR preserves the
+# measured per-rollout policy/value update strength.
+LEARNING_RATE = 5e-4
 CLIP_RANGE = 0.2
 NET_ARCH = [256, 256, 256, 128]
 PPO_KWARGS = dict(
-    n_steps=4096,
-    batch_size=512,
+    n_steps=2048,
+    batch_size=4096,
     n_epochs=10,
     gamma=0.99,
     gae_lambda=0.95,

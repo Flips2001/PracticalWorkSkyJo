@@ -164,12 +164,18 @@ class SkyjoGame:
 
         return legal
 
-    def execute_action(self, player: Player, action: Action) -> None:
+    def execute_action(
+        self,
+        player: Player,
+        action: Action,
+        legal_actions: Optional[List[Action]] = None,
+    ) -> None:
         """
         Execute the selected action for the given player, mutating game state
         and advancing the turn phase accordingly.
         """
-        legal_actions = self.get_legal_actions(player)
+        if legal_actions is None:
+            legal_actions = self.get_legal_actions(player)
         if action not in legal_actions:
             raise ValueError(
                 f"Illegal action {action} for player {player.player_id} "
@@ -263,7 +269,7 @@ class SkyjoGame:
                 action = player.select_action(observation, legal_actions)
                 if self.action_hooks is not None:
                     self.action_hooks.before_action(self, player, action)
-                self.execute_action(player, action)
+                self.execute_action(player, action, legal_actions)
                 if self.action_hooks is not None:
                     self.action_hooks.after_action(self, player, action)
 
@@ -340,7 +346,7 @@ class SkyjoGame:
             )
             if self.action_hooks is not None:
                 self.action_hooks.before_action(self, player, selected_action)
-            self.execute_action(player, selected_action)
+            self.execute_action(player, selected_action, legal_actions)
             clear_stats = self.game_state.remove_uniform_columns_to_discard_pile(
                 self.get_player_state(player)
             )
