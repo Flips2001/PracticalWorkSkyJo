@@ -1,11 +1,18 @@
 """Behavioural regression: does the trained model clear a column when it should?
 
-Each board is built one swap away from completing a *positive-value* column,
-with the completing card sitting face-up on the discard pile — so clearing is
-unambiguously the best move. A model that learned the tactic draws that card and
+Each board is built one swap away from completing a column, with the completing
+card sitting face-up on the discard pile. For a *positive* target, clearing is
+unambiguously the best move: a model that learned the tactic draws that card and
 swaps it into the gap, removing the column. A model that did not would clear only
 ~4% of these boards (random draw-open x random target slot), so requiring a clear
 majority is a strong, low-noise regression signal.
+
+For a *negative* target the same shape is a trap: the card is still worth taking
+(negatives lower the score wherever they land), but completing the column would
+hand the minus points back. The mirror test therefore requires the model to take
+the card AND leave the column uncompleted. Negative boards keep the gap face
+down — a revealed high junk card there can genuinely make completing the best
+move, and the guard must only use boards where the rule is unambiguous.
 
 The boards deliberately vary everything *around* the tactic — how deep the
 discard pile is, how much of the board is face up, and whether the slot to fill
@@ -40,11 +47,16 @@ CHECKPOINT_PATH = (
 )
 
 POSITIVE_CARD_VALUES = [value for value in CARD_VALUES if value > 0]
+NEGATIVE_CARD_VALUES = [value for value in CARD_VALUES if value < 0]
 
 RUNS = 40
 # Well above the ~4% a random policy reaches; tighten after a local calibration
 # run if your checkpoint clears more reliably.
 MIN_CLEAR_RATE = 0.6
+# Negative-trap guard: the model must take the offered negative card on a clear
+# majority of boards and must almost never complete the negative column.
+MIN_NEGATIVE_TAKE_RATE = 0.6
+MAX_NEGATIVE_CLEAR_RATE = 0.1
 # Deepest discard pile a board may be dealt, so the tactic gets exercised in
 # early-, mid- and late-round pile contexts.
 MAX_DISCARD_JUNK = 40
@@ -60,19 +72,20 @@ def _pick_value(rng, budget, exclude=frozenset()):
     return int(rng.choice(candidates))
 
 
-def _one_swap_from_clear_board(rng):
-    """A board whose single gap, once filled from the discard, clears a >0 column.
+def _one_swap_from_clear_board(rng, values=POSITIVE_CARD_VALUES):
+    """A board whose single gap, once filled from the discard, clears a column.
 
     Non-target columns are kept non-uniform, so the only column that can ever be
     removed is the target one. The reveal fraction, the discard-pile depth and
     whether the gap shows a junk card are all sampled per board — see the module
-    docstring for why that breadth is load-bearing.
+    docstring for why that breadth is load-bearing (and why negative targets
+    keep the gap face down).
     """
     budget = dict(INITIAL_CARD_COUNTS)
     target_col = int(rng.integers(0, 4))
     missing_row = int(rng.integers(0, 3))
-    target_value = int(rng.choice(POSITIVE_CARD_VALUES))
-    gap_face_up = bool(rng.random() < 0.5)
+    target_value = int(rng.choice(values))
+    gap_face_up = target_value > 0 and bool(rng.random() < 0.5)
     reveal_prob = float(rng.uniform(0.3, 1.0))
 
     # Two target cards already in the column + the completing card on the discard.
@@ -128,10 +141,16 @@ def _one_swap_from_clear_board(rng):
     return grid, opponent_grid, discard_pile, draw_pile
 
 
-def _model_clears_column(model, rng) -> bool:
+def _draw_and_swap(model, rng, values=POSITIVE_CARD_VALUES) -> tuple[bool, bool]:
+    """Play one draw+swap on a one-swap-from-clear board.
+
+    Returns (drew the open card, cleared the target column).
+    """
     from Skyjo.src.players.rl_player import RLPlayer
 
-    grid, opponent_grid, discard_pile, draw_pile = _one_swap_from_clear_board(rng)
+    grid, opponent_grid, discard_pile, draw_pile = _one_swap_from_clear_board(
+        rng, values
+    )
 
     game = SkyjoGame()
     rl_player = RLPlayer(0, "RL", model=model)
@@ -152,7 +171,7 @@ def _model_clears_column(model, rng) -> bool:
         game.get_observation(rl_player), game.get_legal_actions(rl_player)
     )
     if draw_action.type != ActionType.DRAW_OPEN_CARD:
-        return False
+        return False, False
 
     game.execute_action(rl_player, draw_action)
     game.game_state.remove_uniform_columns_to_discard_pile(rl_state)
@@ -162,26 +181,54 @@ def _model_clears_column(model, rng) -> bool:
     )
     game.execute_action(rl_player, swap_action)
     clear_stats = game.game_state.remove_uniform_columns_to_discard_pile(rl_state)
-    return clear_stats.columns_removed > 0
+    return True, clear_stats.columns_removed > 0
 
 
-def test_model_clears_column_when_it_is_the_best_move():
+def _load_model():
     pytest.importorskip("sb3_contrib")
     from sb3_contrib import MaskablePPO
 
     if not CHECKPOINT_PATH.exists():
         pytest.skip(f"RL checkpoint not found: {CHECKPOINT_PATH}")
     try:
-        model = MaskablePPO.load(str(CHECKPOINT_PATH), device="cpu")
+        return MaskablePPO.load(str(CHECKPOINT_PATH), device="cpu")
     except (ModuleNotFoundError, ImportError, ValueError, RuntimeError) as exc:
         pytest.skip(f"RL checkpoint cannot be loaded in this environment: {exc}")
 
+
+def test_model_clears_column_when_it_is_the_best_move():
+    model = _load_model()
+
     cleared = sum(
-        _model_clears_column(model, np.random.default_rng(seed)) for seed in range(RUNS)
+        _draw_and_swap(model, np.random.default_rng(seed))[1] for seed in range(RUNS)
     )
 
     assert cleared >= RUNS * MIN_CLEAR_RATE, (
         f"model cleared only {cleared}/{RUNS} winnable columns "
         f"(expected >= {int(RUNS * MIN_CLEAR_RATE)}); the column-clear tactic "
         "appears to have regressed."
+    )
+
+
+def test_model_takes_the_negative_card_without_completing_the_column():
+    model = _load_model()
+
+    results = [
+        _draw_and_swap(
+            model, np.random.default_rng(10_000 + seed), NEGATIVE_CARD_VALUES
+        )
+        for seed in range(RUNS)
+    ]
+    took = sum(drew for drew, _ in results)
+    completed = sum(cleared for _, cleared in results)
+
+    assert took >= RUNS * MIN_NEGATIVE_TAKE_RATE, (
+        f"model took the offered negative card on only {took}/{RUNS} boards "
+        f"(expected >= {int(RUNS * MIN_NEGATIVE_TAKE_RATE)}); it appears to have "
+        "learned to refuse negative discard cards."
+    )
+    assert completed <= RUNS * MAX_NEGATIVE_CLEAR_RATE, (
+        f"model completed the negative column on {completed}/{RUNS} boards "
+        f"(expected <= {int(RUNS * MAX_NEGATIVE_CLEAR_RATE)}); completing hands "
+        "the minus points back."
     )

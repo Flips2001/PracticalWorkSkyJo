@@ -48,7 +48,7 @@ Each scenario lives in its own file under `Skyjo/scenarios/` and is runnable on
 its own:
 
 ```bash
-python -m Skyjo.scenarios.column_clear_with_twelves
+python -m Skyjo.scenarios.column_clear
 ```
 
 List what is there:

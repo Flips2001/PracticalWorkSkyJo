@@ -20,7 +20,7 @@ agent reasons about.
 
 Run a scenario with, for example::
 
-    python -m Skyjo.scenarios.column_clear_with_twelves
+    python -m Skyjo.scenarios.column_clear
 """
 
 from __future__ import annotations

@@ -6,7 +6,6 @@ from Skyjo.src.action_type import ActionType
 from Skyjo.src.card import Card
 from Skyjo.src.rl.action_mapping import action_to_int
 from Skyjo.src.rl.column_clear_drill_env import (
-    DRILL_BAD_CLEAR_REWARD,
     DRILL_BUILD_DRAW_REWARD,
     DRILL_BUILD_SWAP_REWARD,
     DRILL_DRAW_REWARD,
@@ -56,9 +55,13 @@ def _pair_col(env: ColumnClearDrillEnv) -> int:
         cols = {col for _, col in env._reward_positions}
         assert len(cols) == 1
         return cols.pop()
-    # Negative pairs are drilled the other way round: everything *but* the seed
-    # column is rewarded.
-    return next(col for _, col in set(ALL_POSITIONS) - env._reward_positions)
+    # Negative pairs: the seed card is the only revealed match on the board.
+    return next(
+        col
+        for row, col in ALL_POSITIONS
+        if env._grid[row][col].face_up
+        and env._grid[row][col].get_value() == env._target_value
+    )
 
 
 def _swap(env: ColumnClearDrillEnv, pos: tuple[int, int]):
@@ -162,30 +165,155 @@ def test_wrong_swap_terminates_with_negative_reward():
     assert truncated is False
 
 
-def test_bad_clear_draw_hidden_terminates_with_positive_reward():
-    env = _env(0.0, positive=False)
+def _negative_clear_env() -> tuple[ColumnClearDrillEnv, int]:
+    """A negative-target CLEAR_COLUMN board plus its target column.
 
-    _, reward, terminated, truncated, _ = env.step(
-        action_to_int(Action(ActionType.DRAW_HIDDEN_CARD))
+    The target column is the only one showing two revealed target-value cards
+    (the target value appears nowhere else revealed on the board).
+    """
+    env = _env(0.0, positive=False)
+    target_col = next(
+        col
+        for col in range(4)
+        if sum(
+            1
+            for row in range(3)
+            if env._grid[row][col].face_up
+            and env._grid[row][col].get_value() == env._target_value
+        )
+        == 2
     )
-
-    assert env._target_value < 0
-    assert reward == pytest.approx(DRILL_BAD_CLEAR_REWARD)
-    assert terminated is True
-    assert truncated is False
+    return env, target_col
 
 
-def test_bad_clear_draw_open_terminates_with_negative_reward():
-    env = _env(0.0, positive=False)
+def test_negative_clear_still_rewards_taking_the_open_card():
+    env, _ = _negative_clear_env()
 
     _, reward, terminated, truncated, _ = env.step(
         action_to_int(Action(ActionType.DRAW_OPEN_CARD))
     )
 
     assert env._target_value < 0
-    assert reward == pytest.approx(-DRILL_BAD_CLEAR_REWARD)
+    assert reward == pytest.approx(DRILL_DRAW_REWARD)
+    assert terminated is False
+    assert truncated is False
+
+
+def test_negative_clear_penalises_refusing_the_open_card():
+    env, _ = _negative_clear_env()
+
+    _, reward, terminated, truncated, _ = env.step(
+        action_to_int(Action(ActionType.DRAW_HIDDEN_CARD))
+    )
+
+    assert reward == pytest.approx(-DRILL_DRAW_REWARD)
     assert terminated is True
     assert truncated is False
+
+
+def test_negative_clear_rewards_exactly_the_improving_outside_slots():
+    """Rewarded: outside slots the negative card improves — hidden cards and
+    revealed higher ones. Not rewarded: revealed cards it cannot beat."""
+    env, target_col = _negative_clear_env()
+
+    expected = {
+        (row, col)
+        for row, col in ALL_POSITIONS
+        if col != target_col
+        and (
+            not env._grid[row][col].face_up
+            or env._grid[row][col].get_value() > env._target_value
+        )
+    }
+    assert env._reward_positions == expected
+    assert expected  # the drill must always offer a rewarded placement
+
+    for pos in sorted(expected):
+        # A swap ends the episode, so each slot needs its own (identical) board.
+        env, _ = _negative_clear_env()
+        env.step(action_to_int(Action(ActionType.DRAW_OPEN_CARD)))
+
+        _, reward, terminated, _, _ = _swap(env, pos)
+
+        assert reward == pytest.approx(DRILL_SWAP_REWARD)
+        assert terminated is True
+
+
+def test_negative_clear_penalises_every_swap_into_the_column():
+    """Filling the gap completes the column; the other slots swap a matching
+    negative for an identical one — a wasted card either way."""
+    for row in range(3):
+        env, target_col = _negative_clear_env()
+        env.step(action_to_int(Action(ActionType.DRAW_OPEN_CARD)))
+
+        _, reward, terminated, _, _ = _swap(env, (row, target_col))
+
+        assert reward == pytest.approx(-DRILL_SWAP_REWARD)
+        assert terminated is True
+
+
+def test_negative_clear_penalises_covering_a_revealed_lower_card():
+    """Covering a revealed card the drawn negative cannot beat (a -2 under a
+    drawn -1) raises the score and gifts the -2 to the discard."""
+    env = ColumnClearDrillEnv(build_pair_prob=0.0)
+    for seed in range(500):
+        env.reset(seed=seed)
+        if env._target_value >= 0:
+            continue
+        lower = next(
+            (
+                (row, col)
+                for row, col in ALL_POSITIONS
+                if env._grid[row][col].face_up
+                and env._grid[row][col].get_value() < env._target_value
+            ),
+            None,
+        )
+        if lower is None:
+            continue
+
+        assert lower not in env._reward_positions
+        env.step(action_to_int(Action(ActionType.DRAW_OPEN_CARD)))
+        _, reward, terminated, _, _ = _swap(env, lower)
+
+        assert reward == pytest.approx(-DRILL_SWAP_REWARD)
+        assert terminated is True
+        return
+    raise AssertionError("no seed produced a revealed card below the target value")
+
+
+def test_negative_clear_gap_is_dealt_face_down():
+    """A revealed high junk gap could make completing the negative column the
+    best move — the drill must never deal a board that refutes its own lesson."""
+    env = ColumnClearDrillEnv(build_pair_prob=0.0)
+    checked = 0
+    for seed in range(60):
+        env.reset(seed=seed)
+        if env._target_value >= 0:
+            continue
+        target_col = next(
+            col
+            for col in range(4)
+            if sum(
+                1
+                for row in range(3)
+                if env._grid[row][col].face_up
+                and env._grid[row][col].get_value() == env._target_value
+            )
+            == 2
+        )
+        gap_row = next(
+            row
+            for row in range(3)
+            if not (
+                env._grid[row][target_col].face_up
+                and env._grid[row][target_col].get_value() == env._target_value
+            )
+        )
+        assert not env._grid[gap_row][target_col].face_up
+        checked += 1
+
+    assert checked > 0
 
 
 def test_hide_accidental_clears_breaks_up_a_revealed_uniform_column():
@@ -292,7 +420,9 @@ def test_negative_build_pair_rewards_keeping_the_low_cards_apart():
     pair_col = _pair_col(env)
     env.step(action_to_int(Action(ActionType.DRAW_OPEN_CARD)))
 
-    away_pos = next(pos for pos in ALL_POSITIONS if pos[1] != pair_col)
+    assert env._reward_positions, "the drill must always offer a rewarded placement"
+    assert all(col != pair_col for _, col in env._reward_positions)
+    away_pos = next(iter(sorted(env._reward_positions)))
     _, reward, terminated, _, _ = _swap(env, away_pos)
 
     assert reward == pytest.approx(DRILL_BUILD_SWAP_REWARD)
@@ -380,14 +510,13 @@ def test_taking_the_open_card_uncovers_the_card_below_it():
         obs, _, terminated, _, _ = env.step(
             action_to_int(Action(ActionType.DRAW_OPEN_CARD))
         )
-        if terminated:  # negative target: taking the card is the trap, skip
-            continue
 
+        assert terminated is False
         assert obs[48] == pytest.approx(normalize_card_value(below))
         assert obs[49] == pytest.approx(1.0)
         assert obs[50] == pytest.approx(normalize_card_value(env._target_value))
         return
-    raise AssertionError("no seed produced a positive target with a pile below top")
+    raise AssertionError("no seed produced a discard pile with a card below the top")
 
 
 def test_clear_column_deals_the_gap_both_face_up_and_face_down():
@@ -396,6 +525,10 @@ def test_clear_column_deals_the_gap_both_face_up_and_face_down():
     gap_states = set()
     for seed in range(30):
         env.reset(seed=seed)
+        if env._target_value < 0:
+            # Negative targets reward the whole board outside the column, so
+            # `_reward_positions` no longer identifies the gap.
+            continue
         (gap_row, gap_col) = next(iter(env._reward_positions))
         gap_states.add(env._grid[gap_row][gap_col].face_up)
 

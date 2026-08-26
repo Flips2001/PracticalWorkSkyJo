@@ -3,8 +3,12 @@
 Each reset samples one of two scenarios (see `DrillMode`):
 
 * ``CLEAR_COLUMN`` — two matching cards are already face up in a column and the
-  third lies on the discard top: take it and swap it into the gap, removing the
-  column.
+  third lies on the discard top. For a positive target: take it and swap it into
+  the gap, removing the column. For a negative target the card is still worth
+  taking — negatives lower the score wherever they land — but completing the
+  column would hand the minus points back, so the drill rewards placing it on
+  any slot outside that column that it improves: a hidden card or a revealed
+  higher one.
 * ``BUILD_PAIR`` — a mostly-covered board shows a single card and its match lies
   on the discard top: take it and swap it into the *same* column, lining the pair
   up so a later third card can clear it.
@@ -44,7 +48,6 @@ from Skyjo.src.turn_phase import TurnPhase
 # Small rewards, comparable to the real-game round/clear shaping (|r| <= ~0.1).
 DRILL_DRAW_REWARD = 0.05
 DRILL_SWAP_REWARD = 0.1
-DRILL_BAD_CLEAR_REWARD = 0.05
 # Pairing only *sets up* a clear, so it pays half of what finishing one pays.
 DRILL_BUILD_DRAW_REWARD = 0.025
 DRILL_BUILD_SWAP_REWARD = 0.05
@@ -60,8 +63,12 @@ _REVEAL_PROB_RANGE = (0.2, 0.9)
 # Pair building starts from a mostly-covered board, so outside the pair column
 # only a few distractors are face up.
 _BUILD_REVEAL_PROB_RANGE = (0.1, 0.5)
-# Share of CLEAR_COLUMN resets whose completing slot already shows a junk card
-# rather than being face down; both shapes occur in real positions.
+# Share of positive-target CLEAR_COLUMN resets whose completing slot already
+# shows a junk card rather than being face down; both shapes occur in real
+# positions. Negative targets always deal the gap face down: a revealed high
+# junk card there can make completing the negative column the best move
+# (dumping it outweighs the returned minus points), and the drill must never
+# produce a board where its own "never complete" lesson is wrong.
 _FACE_UP_GAP_PROB = 0.5
 
 
@@ -129,20 +136,11 @@ class ColumnClearDrillEnv(Env):
         draw_reward, swap_reward = self._reward_scale()
 
         if self._phase == TurnPhase.CHOOSE_DRAW:
-            # Only finishing a column can be a trap at the draw step. The card
-            # that starts a pair is worth taking either way — a low one lowers
-            # our score, a high one buys the pair — so BUILD_PAIR always drills
-            # the placement instead.
-            if self._mode is DrillMode.CLEAR_COLUMN and self._target_value < 0:
-                # Completing this column would *raise* our score: the right move
-                # is to leave it and draw a hidden card instead.
-                reward = (
-                    DRILL_BAD_CLEAR_REWARD
-                    if action.type == ActionType.DRAW_HIDDEN_CARD
-                    else -DRILL_BAD_CLEAR_REWARD
-                )
-                return np.zeros(OBS_SIZE, dtype=np.float32), reward, True, False, {}
-
+            # The offered card is worth taking in every scenario — a low one
+            # lowers our score wherever it lands, a high one buys the pair — so
+            # the draw step always drills DRAW_OPEN. The negative-column trap
+            # lives at the swap step: `_rewarded_swaps` excludes that column
+            # and any revealed card the drawn one cannot beat.
             if action.type == ActionType.DRAW_OPEN_CARD:
                 self._phase = TurnPhase.HAVE_DRAWN_OPEN
                 self._current_mask = self._swap_mask()
@@ -178,19 +176,30 @@ class ColumnClearDrillEnv(Env):
         self, target_col: int, target_row: int
     ) -> frozenset[tuple[int, int]]:
         """Swap slots that earn the positive reward for this episode."""
+        if self._target_value < 0:
+            # A column of negative cards is a trap: the engine removes uniform
+            # columns automatically, so completing (CLEAR_COLUMN) or lining up
+            # (BUILD_PAIR) one would give the minus points back. The drawn
+            # negative card still belongs on the board, but only where it
+            # improves it — a hidden card or a revealed higher one. Covering a
+            # revealed card it cannot beat (a -2 under a drawn -1) would raise
+            # the score and hand the better card to the opponent.
+            return frozenset(
+                (row, col)
+                for row in range(3)
+                for col in range(4)
+                if col != target_col
+                and (
+                    not self._grid[row][col].face_up
+                    or self._grid[row][col].get_value() > self._target_value
+                )
+            )
+
         if self._mode is DrillMode.CLEAR_COLUMN:
             return frozenset({(target_row, target_col)})
 
-        if self._target_value > 0:
-            # Either remaining slot of the column lines the pair up.
-            return frozenset((row, target_col) for row in range(3) if row != target_row)
-
-        # A column of negative cards is a trap: the engine removes uniform
-        # columns automatically, so completing one would give the minus points
-        # back. Keep the low card anywhere but next to its match.
-        return frozenset(
-            (row, col) for row in range(3) for col in range(4) if col != target_col
-        )
+        # Either remaining slot of the column lines the pair up.
+        return frozenset((row, target_col) for row in range(3) if row != target_row)
 
     def _reward_scale(self) -> tuple[float, float]:
         """(draw, swap) reward magnitudes for the current scenario."""
@@ -253,8 +262,9 @@ def make_column_clear_drill_env(build_pair_prob: float = DEFAULT_BUILD_PAIR_PROB
 def _pick_target_value(rng) -> int:
     """A non-zero card value.
 
-    0-value columns are score-neutral in-game, so they teach neither "good clear"
-    (>0) nor "avoid this one" (<0) — the drill never uses them as a target.
+    0-value columns are score-neutral in-game, so they teach neither "complete
+    the column" (>0) nor "keep it uncompleted" (<0) — the drill never uses them
+    as a target.
     """
     value = 0
     while value == 0:
@@ -276,7 +286,8 @@ def _make_drill_state(rng, target_col: int, missing_row: int, target_value: int)
     budget[target_value] -= 3
     gap_value = _pick_value(rng, budget, exclude=frozenset({target_value}))
     budget[gap_value] -= 1
-    gap_face_up = bool(rng.random() < _FACE_UP_GAP_PROB)
+    # Negative targets keep the gap face down — see _FACE_UP_GAP_PROB.
+    gap_face_up = target_value > 0 and bool(rng.random() < _FACE_UP_GAP_PROB)
     reveal_prob = rng.uniform(*_REVEAL_PROB_RANGE)
 
     grid: list[list[Card]] = []
