@@ -57,7 +57,7 @@ GRID_COLS = 4
 CHECKPOINT_DIR = os.path.join(
     os.path.dirname(__file__), os.pardir, "src", "rl", "checkpoints"
 )
-DEFAULT_MODEL = "skyjo_ppo_best"
+DEFAULT_MODEL = "skyjo_ppo_final"
 DEVICE = "cpu"
 
 CardSpec = Union[int, str]
