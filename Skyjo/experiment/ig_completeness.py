@@ -32,10 +32,14 @@ from Skyjo.src.skyjo_game import SkyjoGame  # noqa: E402
 GAMES = 10
 MODEL = DEFAULT_MODEL
 STEPS = (32, 128, 512, 2048, 8192)
-# A decision passes when its gap is within REL_TOL of the total influence, or
-# within ABS_TOL when the total influence itself is close to zero.
+# Passed to np.isclose(attributed, total), i.e. |gap| <= ABS_TOL + REL_TOL *
+# |total|. REL_TOL is the 5% Sundararajan et al. (2017) suggest; ABS_TOL
+# (~0.1% in action probability) keeps decisions whose total influence is ~0
+# from failing on negligible gaps.
 REL_TOL = 0.05
 ABS_TOL = 0.001
+# The relative gap skips decisions with |total influence| <= this: at 0 the ratio
+# is 0/0, and just above 0 negligible gaps blow up into huge percentages.
 MIN_TOTAL_FOR_RELATIVE = 0.001
 
 
