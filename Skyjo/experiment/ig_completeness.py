@@ -35,7 +35,8 @@ STEPS = (32, 128, 512, 2048, 8192)
 # A decision passes when its gap is within REL_TOL of the total influence, or
 # within ABS_TOL when the total influence itself is close to zero.
 REL_TOL = 0.05
-ABS_TOL = 0.01
+ABS_TOL = 0.001
+MIN_TOTAL_FOR_RELATIVE = 0.001
 
 
 class _CompletenessRecorder:
@@ -77,11 +78,11 @@ def play_game(model, recorder: _CompletenessRecorder) -> None:
 def report(recorder: _CompletenessRecorder) -> None:
     for steps in STEPS:
         totals = np.array(recorder.totals[steps])
-        gaps = np.abs(np.array(recorder.gaps[steps]))
-        passed = gaps <= np.maximum(ABS_TOL, REL_TOL * np.abs(totals))
-        relative = gaps[np.abs(totals) > ABS_TOL] / np.abs(
-            totals[np.abs(totals) > ABS_TOL]
-        )
+        attributed = totals + np.array(recorder.gaps[steps])
+        gaps = np.abs(attributed - totals)
+        passed = np.isclose(attributed, totals, rtol=REL_TOL, atol=ABS_TOL)
+        large = np.abs(totals) > MIN_TOTAL_FOR_RELATIVE
+        relative = gaps[large] / np.abs(totals[large])
         print(f"\n{steps} steps, {len(gaps)} decisions:")
         print(f"  |total influence|  median {np.median(np.abs(totals)):.4f}")
         print(
@@ -92,6 +93,8 @@ def report(recorder: _CompletenessRecorder) -> None:
             print(
                 f"  |gap| / |total|    median {np.median(relative):.1%}"
                 f"  p95 {np.percentile(relative, 95):.1%}"
+                f"  ({(~large).sum()} decisions with |total| <= "
+                f"{MIN_TOTAL_FOR_RELATIVE} left out)"
             )
         print(f"  within tolerance   {passed.mean():.1%}")
 
