@@ -26,7 +26,7 @@ class RLPlayer(Player):
         model_path: Optional[str] = None,
         model: Optional[MaskablePPO] = None,
         explain_moves: bool = False,
-        explanation_steps: int = 32,
+        explanation_steps: int = 512,
         deterministic: bool = True,
     ):
         super().__init__(player_id, player_name)

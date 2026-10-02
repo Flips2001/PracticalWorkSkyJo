@@ -148,7 +148,7 @@ def integrated_gradients(
     action_index: int,
     action_mask: Optional[np.ndarray] = None,
     *,
-    steps: int = 32,
+    steps: int = 512,
     baseline: Optional[np.ndarray] = None,
 ) -> Tuple[np.ndarray, float, float]:
     """Compute integrated gradients for the selected action log-probability.
@@ -218,7 +218,7 @@ def explain_action(
     action: Action,
     legal_actions: Iterable[Action],
     *,
-    steps: int = 32,
+    steps: int = 512,
 ) -> ActionExplanation:
     """Build an integrated-gradients explanation for a selected action."""
     action_index = action_to_int(action)
