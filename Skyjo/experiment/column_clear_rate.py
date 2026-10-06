@@ -25,6 +25,7 @@ from Skyjo.scenarios.scenario import (  # noqa: E402
 from Skyjo.src.action_type import ActionType  # noqa: E402
 from Skyjo.src.players.phillips_player import PhillipsPlayer  # noqa: E402
 from Skyjo.src.players.rl_player import RLPlayer  # noqa: E402
+from Skyjo.src.skyjo_game import SkyjoGame  # noqa: E402
 
 RUNS = 1000
 MODEL = DEFAULT_MODEL
@@ -48,8 +49,8 @@ class _FirstAction:
         pass
 
 
-def run_once(model: MaskablePPO) -> tuple[ActionType, bool]:
-    agent = RLPlayer(AGENT_ID, "RL", model=model, deterministic=True)
+def build_randomized_game(agent) -> SkyjoGame:
+    """The column clear scenario with a random board and a round-sized discard pile."""
     opponent = PhillipsPlayer(
         HUMAN_ID, "Phillips", cutoff=random.choice(PHILLIPS_CUTOFFS)
     )
@@ -71,7 +72,12 @@ def run_once(model: MaskablePPO) -> tuple[ActionType, bool]:
     for card in junk:
         card.reveal()
     state.discard_pile = junk + state.discard_pile
+    return game
 
+
+def run_once(model: MaskablePPO) -> tuple[ActionType, bool]:
+    agent = RLPlayer(AGENT_ID, "RL", model=model, deterministic=True)
+    game = build_randomized_game(agent)
     first = _FirstAction()
     game.action_hooks = first
     game.turn(agent)
