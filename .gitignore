@@ -213,3 +213,5 @@ Skyjo/src/rl/tb_logs/
 
 # MacOS
 .DS_Store
+# SkyNet code and checkpoint, downloaded on first run by Skyjo/competitions/skynet_bridge.py
+/.skynet/
